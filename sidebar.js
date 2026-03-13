@@ -1,4 +1,4 @@
-/* sidebar.js – Interview Playbook Builder (contenteditable edition) */
+/* sidebar.js –  Playbook  (contenteditable edition) */
 'use strict';
 
 // ─── State ────────────────────────────────────────────────────────────────────

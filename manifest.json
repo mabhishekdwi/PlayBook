@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Interview Playbook Builder",
+  "name": "Playbook",
   "version": "1.0",
   "description": "Floating sidebar to build, organize, and export interview prep notes with full rich-text formatting.",
   "permissions": ["storage"],

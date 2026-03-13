@@ -53,36 +53,33 @@
       height: 40px; flex-shrink: 0;
       background: #0f172a;
       display: flex; align-items: center;
-      padding: 0 12px; gap: 10px;
+      padding: 0 0 0 12px;
       cursor: grab; user-select: none;
       border-radius: 10px 10px 0 0;
     }
     #__pb_titlebar__:active { cursor: grabbing; }
 
-    /* Traffic-light buttons */
-    .pb-win-btns { display: flex; gap: 7px; flex-shrink: 0; }
+    /* Windows-style title bar buttons (right side) */
+    .pb-win-btns { display: flex; flex-shrink: 0; margin-right: -12px; }
     .pb-win-btn {
-      width: 13px; height: 13px; border-radius: 50%;
+      width: 46px; height: 40px; border-radius: 0;
       border: none; cursor: pointer; padding: 0; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 0; /* hide text by default */
-      transition: filter 0.1s;
+      background: transparent; color: #94a3b8;
+      font-size: 12px; font-family: 'Segoe UI', sans-serif;
+      transition: background 0.1s, color 0.1s;
     }
-    .pb-win-btn:active { filter: brightness(0.8); }
-    /* Show glyphs on hover of the button group */
-    .pb-win-btns:hover .pb-win-btn { font-size: 8px; font-weight: 800; line-height: 1; }
-    #pb-btn-close    { background: #ff5f56; color: #7a1200; }
-    #pb-btn-minimize { background: #ffbd2e; color: #7a5a00; }
-    #pb-btn-maximize { background: #27c93f; color: #0a5a1a; }
+    .pb-win-btn:hover        { background: rgba(255,255,255,0.12); color: #fff; }
+    #pb-btn-close:hover      { background: #e81123; color: #fff; }
+    #pb-btn-maximize:hover   { background: rgba(255,255,255,0.12); color: #fff; }
 
     .pb-title-text {
-      flex: 1; text-align: center;
+      flex: 1;
       font-size: 12px; font-weight: 600; color: #94a3b8;
       pointer-events: none; letter-spacing: 0.3px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding-left: 8px;
     }
-    /* Spacer mirrors the button group width so title stays centered */
-    .pb-title-spacer { width: 45px; flex-shrink: 0; }
 
     /* ── Iframe fills remainder of container ── */
     #__pb_frame__ {
@@ -140,13 +137,12 @@
   const titlebar = document.createElement('div');
   titlebar.id = '__pb_titlebar__';
   titlebar.innerHTML = `
-    <div class="pb-win-btns">
-      <button class="pb-win-btn" id="pb-btn-close"    title="Close">&#x2715;</button>
-      <button class="pb-win-btn" id="pb-btn-minimize" title="Minimize">&#x2212;</button>
-      <button class="pb-win-btn" id="pb-btn-maximize" title="Maximize / Restore">&#x2922;</button>
-    </div>
     <span class="pb-title-text">Interview Playbook</span>
-    <div class="pb-title-spacer"></div>
+    <div class="pb-win-btns">
+      <button class="pb-win-btn" id="pb-btn-minimize" title="Minimize">&#x2212;</button>
+      <button class="pb-win-btn" id="pb-btn-maximize" title="Maximize / Restore">&#x25A1;</button>
+      <button class="pb-win-btn" id="pb-btn-close"    title="Close">&#x2715;</button>
+    </div>
   `;
   container.appendChild(titlebar);
 

@@ -1,0 +1,16 @@
+node_modules/
+dist-build/
+*.log
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/
+
+# Python cache (from setup_icons.py)
+__pycache__/
+*.pyc
+*.pyo
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md

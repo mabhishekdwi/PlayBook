@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interview Playbook</title>
+  <link rel="stylesheet" href="sidebar.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Top Header ──────────────────────────────────────────────────────── -->
+    <header id="header">
+      <div id="header-left">
+        <span id="header-logo">&#128203;</span>
+        <span id="header-title">Playbook</span>
+      </div>
+      <div id="header-actions">
+        <button id="btn-export-pdf" title="Export all pages as PDF">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          PDF
+        </button>
+        <button id="btn-copy-all" title="Copy all pages to clipboard">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Main Split Layout ──────────────────────────────────────────────── -->
+    <div id="main">
+
+      <!-- Pages Sidebar -->
+      <aside id="pages-panel">
+        <div id="pages-header">
+          <span class="panel-label">Pages</span>
+          <button id="btn-add-page" title="Add new page">+ New</button>
+        </div>
+        <ul id="pages-list"></ul>
+      </aside>
+
+      <!-- Editor -->
+      <section id="editor-panel">
+        <div id="editor-header">
+          <input id="page-title-input" type="text" placeholder="Page title…" spellcheck="false" />
+          <button id="btn-delete-page" title="Delete this page">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>
+
+        <!-- Formatting Toolbar -->
+        <div id="toolbar">
+          <select id="fmt-block" title="Text style">
+            <option value="p">Normal</option>
+            <option value="h1">H1</option>
+            <option value="h2">H2</option>
+            <option value="h3">H3</option>
+          </select>
+          <span class="tb-sep"></span>
+          <button class="tb-btn" data-cmd="bold"          title="Bold"         ><b>B</b></button>
+          <button class="tb-btn" data-cmd="italic"        title="Italic"       ><i>I</i></button>
+          <button class="tb-btn" data-cmd="underline"     title="Underline"    ><u>U</u></button>
+          <button class="tb-btn" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+          <span class="tb-sep"></span>
+          <button class="tb-btn" data-cmd="insertUnorderedList" title="Bullet list">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="2" fill="currentColor" stroke="none"/></svg>
+          </button>
+          <button class="tb-btn" data-cmd="insertOrderedList" title="Numbered list">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/><text x="1" y="8.5" fill="currentColor" stroke="none" font-size="8" font-weight="700" font-family="sans-serif">1</text><text x="1" y="14.5" fill="currentColor" stroke="none" font-size="8" font-weight="700" font-family="sans-serif">2</text><text x="1" y="20.5" fill="currentColor" stroke="none" font-size="8" font-weight="700" font-family="sans-serif">3</text></svg>
+          </button>
+          <button class="tb-btn" data-cmd="indent"  title="Indent" >&#8677;</button>
+          <button class="tb-btn" data-cmd="outdent" title="Outdent">&#8676;</button>
+          <span class="tb-sep"></span>
+          <button class="tb-btn" id="btn-tb-code"  title="Code block">&lt;/&gt;</button>
+          <button class="tb-btn" id="btn-tb-quote" title="Blockquote">&#10077;</button>
+          <button class="tb-btn" id="btn-tb-link"  title="Insert link">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          </button>
+          <button class="tb-btn" data-cmd="removeFormat" title="Clear formatting">&#10005;</button>
+        </div>
+
+        <!-- Editable content area -->
+        <div id="editor-scroll">
+          <div id="editor" contenteditable="true" spellcheck="true"></div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <div id="__toast__" class="toast"></div>
+
+  <!-- ── PDF Export Modal ──────────────────────────────────────────────────── -->
+  <div id="pdf-modal" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Export as PDF</h2>
+        <button class="modal-x" id="modal-close" title="Close">&#10005;</button>
+      </div>
+      <p class="modal-hint">Choose which pages to include in your PDF.</p>
+      <div class="modal-bulk">
+        <button class="modal-bulk-btn" id="modal-select-all">&#10003; Select all</button>
+        <button class="modal-bulk-btn" id="modal-deselect-all">&#9633; Deselect all</button>
+      </div>
+      <ul id="pdf-page-list"></ul>
+      <div class="modal-footer">
+        <button class="modal-btn-cancel" id="modal-cancel">Cancel</button>
+        <button class="modal-btn-export" id="modal-export">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export PDF
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="lib/Sortable.min.js"></script>
+  <script src="lib/html2pdf.bundle.min.js"></script>
+  <script src="sidebar.js"></script>
+</body>
+</html>

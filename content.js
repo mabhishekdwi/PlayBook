@@ -1,141 +1,312 @@
 /* content.js – injected into every page */
 (function () {
   'use strict';
-  if (document.getElementById('__pb_frame__')) return; // already injected
+  if (document.getElementById('__pb_container__')) return;
 
-  /* ── Styles injected into the HOST page ─────────────────────────────────── */
+  const MIN_W = 320, MIN_H = 220;
+  const DEFAULT_W = 520, DEFAULT_H = 680;
+
+  let isOpen      = false;
+  let isMinimized = false;
+  let isMaximized = false;
+  let savedRect   = null; // rect saved before maximize
+
+  /* ── Styles injected into the HOST page ───────────────────────────────────── */
   const style = document.createElement('style');
   style.textContent = `
+    /* ── Re-open toggle (shown only when window is closed) ── */
     #__pb_toggle__ {
       position: fixed;
-      right: 0;
-      top: 50%;
+      right: 0; top: 50%;
       transform: translateY(-50%);
       z-index: 2147483646;
-      background: #2563eb;
-      color: #fff;
-      border: none;
-      border-radius: 10px 0 0 10px;
-      padding: 18px 7px;
-      cursor: pointer;
-      writing-mode: vertical-lr;
-      text-orientation: mixed;
-      font-size: 11px;
-      font-weight: 700;
+      background: #2563eb; color: #fff;
+      border: none; border-radius: 10px 0 0 10px;
+      padding: 18px 7px; cursor: pointer;
+      writing-mode: vertical-lr; text-orientation: mixed;
+      font-size: 11px; font-weight: 700;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      letter-spacing: 3px;
-      text-transform: uppercase;
+      letter-spacing: 3px; text-transform: uppercase;
       box-shadow: -3px 0 14px rgba(37,99,235,0.45);
-      transition: right 0.3s ease, background 0.2s;
-      line-height: 1;
-      user-select: none;
+      line-height: 1; user-select: none;
+      transition: background 0.2s;
     }
     #__pb_toggle__:hover { background: #1d4ed8; }
 
-    #__pb_frame__ {
+    /* ── Floating window container ── */
+    #__pb_container__ {
       position: fixed;
-      top: 0;
-      right: -500px;
-      width: 500px;
-      height: 100vh;
-      border: none;
+      top: 60px; right: 60px;
+      width: ${DEFAULT_W}px; height: ${DEFAULT_H}px;
+      min-width: ${MIN_W}px; min-height: ${MIN_H}px;
       z-index: 2147483647;
-      box-shadow: -6px 0 32px rgba(0,0,0,0.18);
-      transition: right 0.3s ease;
-      background: #fff;
-      border-radius: 0;
+      border-radius: 10px;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.36), 0 2px 8px rgba(0,0,0,0.14);
+      display: none; flex-direction: column;
+      border: 1px solid rgba(255,255,255,0.06);
+      background: #fff; overflow: hidden;
     }
-    #__pb_frame__.pb-open { right: 0; }
+    #__pb_container__.pb-open { display: flex; }
 
-    #__pb_resize__ {
-      position: fixed;
-      top: 0;
-      right: -500px;
-      width: 5px;
-      height: 100vh;
-      z-index: 2147483648;
-      cursor: ew-resize;
-      background: transparent;
-      transition: right 0.3s ease;
+    /* ── Title bar (drag handle + window controls) ── */
+    #__pb_titlebar__ {
+      height: 40px; flex-shrink: 0;
+      background: #0f172a;
+      display: flex; align-items: center;
+      padding: 0 12px; gap: 10px;
+      cursor: grab; user-select: none;
+      border-radius: 10px 10px 0 0;
     }
-    #__pb_resize__.pb-open { right: 495px; }
-    #__pb_resize__:hover, #__pb_resize__.dragging { background: rgba(37,99,235,0.35); }
+    #__pb_titlebar__:active { cursor: grabbing; }
+
+    /* Traffic-light buttons */
+    .pb-win-btns { display: flex; gap: 7px; flex-shrink: 0; }
+    .pb-win-btn {
+      width: 13px; height: 13px; border-radius: 50%;
+      border: none; cursor: pointer; padding: 0; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0; /* hide text by default */
+      transition: filter 0.1s;
+    }
+    .pb-win-btn:active { filter: brightness(0.8); }
+    /* Show glyphs on hover of the button group */
+    .pb-win-btns:hover .pb-win-btn { font-size: 8px; font-weight: 800; line-height: 1; }
+    #pb-btn-close    { background: #ff5f56; color: #7a1200; }
+    #pb-btn-minimize { background: #ffbd2e; color: #7a5a00; }
+    #pb-btn-maximize { background: #27c93f; color: #0a5a1a; }
+
+    .pb-title-text {
+      flex: 1; text-align: center;
+      font-size: 12px; font-weight: 600; color: #94a3b8;
+      pointer-events: none; letter-spacing: 0.3px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    /* Spacer mirrors the button group width so title stays centered */
+    .pb-title-spacer { width: 45px; flex-shrink: 0; }
+
+    /* ── Iframe fills remainder of container ── */
+    #__pb_frame__ {
+      flex: 1; border: none; width: 100%; min-height: 0; display: block;
+    }
+
+    /* ── 8-direction resize handles ── */
+    .pb-rz { position: absolute; z-index: 10; }
+    .pb-rz-n  { top:-3px;    left:8px;    right:8px;   height:6px;  cursor:n-resize;  }
+    .pb-rz-s  { bottom:-3px; left:8px;    right:8px;   height:6px;  cursor:s-resize;  }
+    .pb-rz-w  { left:-3px;   top:8px;     bottom:8px;  width:6px;   cursor:w-resize;  }
+    .pb-rz-e  { right:-3px;  top:8px;     bottom:8px;  width:6px;   cursor:e-resize;  }
+    .pb-rz-nw { top:-3px;    left:-3px;   width:12px;  height:12px; cursor:nw-resize; }
+    .pb-rz-ne { top:-3px;    right:-3px;  width:12px;  height:12px; cursor:ne-resize; }
+    .pb-rz-sw { bottom:-3px; left:-3px;   width:12px;  height:12px; cursor:sw-resize; }
+    .pb-rz-se { bottom:-3px; right:-3px;  width:12px;  height:12px; cursor:se-resize; }
+
+    /* ── Minimized: collapse to just the titlebar ── */
+    #__pb_container__.pb-minimized { height: 40px !important; min-height: 40px; border-radius: 10px; }
+    #__pb_container__.pb-minimized #__pb_frame__ { display: none; }
+    #__pb_container__.pb-minimized .pb-rz { display: none; }
+    #__pb_container__.pb-minimized #__pb_titlebar__ { border-radius: 10px; }
+
+    /* ── Maximized: fill viewport ── */
+    #__pb_container__.pb-maximized {
+      top: 0 !important; left: 0 !important;
+      width: 100vw !important; height: 100vh !important;
+      border-radius: 0 !important;
+    }
+    #__pb_container__.pb-maximized .pb-rz { display: none; }
+    #__pb_container__.pb-maximized #__pb_titlebar__ { border-radius: 0; }
   `;
   document.head.appendChild(style);
 
-  /* ── Toggle button ───────────────────────────────────────────────────────── */
+  /* ── Re-open toggle button ─────────────────────────────────────────────────── */
   const toggle = document.createElement('button');
   toggle.id = '__pb_toggle__';
   toggle.textContent = 'Playbook';
-  toggle.title = 'Toggle Interview Playbook';
+  toggle.title = 'Open Interview Playbook';
   document.body.appendChild(toggle);
 
-  /* ── Sidebar iframe ──────────────────────────────────────────────────────── */
+  /* ── Floating container ────────────────────────────────────────────────────── */
+  const container = document.createElement('div');
+  container.id = '__pb_container__';
+
+  // 8 resize handles
+  ['n','s','e','w','nw','ne','sw','se'].forEach(dir => {
+    const h = document.createElement('div');
+    h.className = `pb-rz pb-rz-${dir}`;
+    h.dataset.dir = dir;
+    container.appendChild(h);
+  });
+
+  // Title bar
+  const titlebar = document.createElement('div');
+  titlebar.id = '__pb_titlebar__';
+  titlebar.innerHTML = `
+    <div class="pb-win-btns">
+      <button class="pb-win-btn" id="pb-btn-close"    title="Close">&#x2715;</button>
+      <button class="pb-win-btn" id="pb-btn-minimize" title="Minimize">&#x2212;</button>
+      <button class="pb-win-btn" id="pb-btn-maximize" title="Maximize / Restore">&#x2922;</button>
+    </div>
+    <span class="pb-title-text">Interview Playbook</span>
+    <div class="pb-title-spacer"></div>
+  `;
+  container.appendChild(titlebar);
+
+  // iframe
   const frame = document.createElement('iframe');
   frame.id = '__pb_frame__';
   frame.src = chrome.runtime.getURL('sidebar.html');
   frame.allow = 'clipboard-write';
-  document.body.appendChild(frame);
+  container.appendChild(frame);
 
-  /* ── Resize handle ───────────────────────────────────────────────────────── */
-  const resizeHandle = document.createElement('div');
-  resizeHandle.id = '__pb_resize__';
-  document.body.appendChild(resizeHandle);
+  document.body.appendChild(container);
 
-  let isOpen = false;
-  let sidebarWidth = 500;
-
-  function open() {
+  /* ── Window state helpers ──────────────────────────────────────────────────── */
+  function openWindow() {
     isOpen = true;
-    // Always use inline style — it beats the CSS class when resize has run
-    frame.style.right = '0';
-    resizeHandle.style.right = (sidebarWidth - 5) + 'px';
-    toggle.style.right = sidebarWidth + 'px';
-    toggle.textContent = 'Close';
+    container.classList.add('pb-open');
+    toggle.style.display = 'none';
   }
-  function close() {
+
+  function closeWindow() {
     isOpen = false;
-    // Must set inline right explicitly; removing the class alone is not enough
-    // because the resize handler wrote an inline style that overrides CSS classes.
-    frame.style.right = '-' + sidebarWidth + 'px';
-    resizeHandle.style.right = '-' + sidebarWidth + 'px';
-    toggle.style.right = '0';
-    toggle.textContent = 'Playbook';
+    isMinimized = false;
+    isMaximized = false;
+    container.classList.remove('pb-open', 'pb-minimized', 'pb-maximized');
+    toggle.style.display = '';
   }
 
-  toggle.addEventListener('click', () => (isOpen ? close() : open()));
+  function minimizeWindow() {
+    if (isMaximized) restoreMaximize();
+    isMinimized = !isMinimized;
+    container.classList.toggle('pb-minimized', isMinimized);
+  }
 
-  /* ── Resize logic ────────────────────────────────────────────────────────── */
-  let resizing = false, startX = 0, startWidth = 0;
+  function toggleMaximize() {
+    if (isMinimized) {
+      isMinimized = false;
+      container.classList.remove('pb-minimized');
+    }
+    if (!isMaximized) {
+      // Save current geometry for restore
+      const r = container.getBoundingClientRect();
+      savedRect = {
+        top:    r.top    + 'px',
+        left:   r.left   + 'px',
+        width:  r.width  + 'px',
+        height: r.height + 'px',
+      };
+      // Pin by left/top before maximize so restore works cleanly
+      container.style.top    = savedRect.top;
+      container.style.left   = savedRect.left;
+      container.style.right  = 'auto';
+      container.style.width  = savedRect.width;
+      container.style.height = savedRect.height;
+      container.classList.add('pb-maximized');
+      isMaximized = true;
+    } else {
+      restoreMaximize();
+    }
+  }
 
-  resizeHandle.addEventListener('mousedown', (e) => {
-    resizing = true;
-    startX = e.clientX;
-    startWidth = sidebarWidth;
-    resizeHandle.classList.add('dragging');
-    // Disable pointer events on the iframe so it doesn't capture mousemove/mouseup
-    // while the drag is in progress — this is the classic iframe drag-break bug.
+  function restoreMaximize() {
+    container.classList.remove('pb-maximized');
+    isMaximized = false;
+    if (savedRect) {
+      container.style.top    = savedRect.top;
+      container.style.left   = savedRect.left;
+      container.style.right  = 'auto';
+      container.style.width  = savedRect.width;
+      container.style.height = savedRect.height;
+    }
+  }
+
+  toggle.addEventListener('click', openWindow);
+  document.getElementById('pb-btn-close').addEventListener('click', closeWindow);
+  document.getElementById('pb-btn-minimize').addEventListener('click', minimizeWindow);
+  document.getElementById('pb-btn-maximize').addEventListener('click', toggleMaximize);
+  titlebar.addEventListener('dblclick', (e) => {
+    if (!e.target.closest('.pb-win-btn')) toggleMaximize();
+  });
+
+  /* ── Drag (move) ───────────────────────────────────────────────────────────── */
+  let dragging = false;
+  let dragStartX = 0, dragStartY = 0, dragOrigLeft = 0, dragOrigTop = 0;
+
+  titlebar.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.pb-win-btn')) return;
+    if (isMaximized) return;
+    dragging = true;
+    const r = container.getBoundingClientRect();
+    dragOrigLeft = r.left;
+    dragOrigTop  = r.top;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    // Switch to left/top positioning so drag math is straightforward
+    container.style.left  = dragOrigLeft + 'px';
+    container.style.right = 'auto';
+    container.style.top   = dragOrigTop  + 'px';
     frame.style.pointerEvents = 'none';
     document.body.style.userSelect = 'none';
     e.preventDefault();
   });
 
   document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    container.style.left = (dragOrigLeft + e.clientX - dragStartX) + 'px';
+    container.style.top  = (dragOrigTop  + e.clientY - dragStartY) + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    frame.style.pointerEvents = '';
+    document.body.style.userSelect = '';
+  });
+
+  /* ── Resize (8 directions) ─────────────────────────────────────────────────── */
+  let resizing = false, resDir = '';
+  let rsX = 0, rsY = 0, rsL = 0, rsT = 0, rsW = 0, rsH = 0;
+
+  container.querySelectorAll('.pb-rz').forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      if (isMaximized || isMinimized) return;
+      resizing = true;
+      resDir = handle.dataset.dir;
+      rsX = e.clientX;
+      rsY = e.clientY;
+      const r = container.getBoundingClientRect();
+      rsL = r.left; rsT = r.top; rsW = r.width; rsH = r.height;
+      // Fix to left/top so resize math works in all directions
+      container.style.left  = rsL + 'px';
+      container.style.right = 'auto';
+      container.style.top   = rsT + 'px';
+      frame.style.pointerEvents = 'none';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  });
+
+  document.addEventListener('mousemove', (e) => {
     if (!resizing) return;
-    const delta = startX - e.clientX;
-    const newW = Math.min(800, Math.max(320, startWidth + delta));
-    sidebarWidth = newW;
-    frame.style.width = newW + 'px';
-    frame.style.right = isOpen ? '0' : -newW + 'px';
-    resizeHandle.style.right = isOpen ? newW - 5 + 'px' : -newW + 'px';
-    toggle.style.right = isOpen ? newW + 'px' : '0';
+    const dx = e.clientX - rsX;
+    const dy = e.clientY - rsY;
+    let l = rsL, t = rsT, w = rsW, h = rsH;
+
+    if (resDir.includes('e')) w = Math.max(MIN_W, rsW + dx);
+    if (resDir.includes('s')) h = Math.max(MIN_H, rsH + dy);
+    if (resDir.includes('w')) { w = Math.max(MIN_W, rsW - dx); l = rsL + (rsW - w); }
+    if (resDir.includes('n')) { h = Math.max(MIN_H, rsH - dy); t = rsT + (rsH - h); }
+
+    container.style.left   = l + 'px';
+    container.style.top    = t + 'px';
+    container.style.width  = w + 'px';
+    container.style.height = h + 'px';
   });
 
   document.addEventListener('mouseup', () => {
     if (!resizing) return;
     resizing = false;
-    resizeHandle.classList.remove('dragging');
-    frame.style.pointerEvents = ''; // restore iframe interactivity
+    frame.style.pointerEvents = '';
     document.body.style.userSelect = '';
   });
 })();

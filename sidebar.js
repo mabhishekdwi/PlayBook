@@ -519,6 +519,7 @@ function exportPDF(pagesToExport) {
     *{box-sizing:border-box}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#111827}
     .pb-page{padding:16px 24px;page-break-after:always}
+    .pb-page:last-child{page-break-after:avoid}
     .pb-title{font-size:20px;font-weight:800;margin:0 0 12px;padding-bottom:8px;border-bottom:2px solid #e5e7eb;color:#111827}
     .pb-body{line-height:1.7}
     .pb-body h1{font-size:18px;font-weight:800;margin:14px 0 6px;padding-bottom:6px;border-bottom:1px solid #e5e7eb}
@@ -544,7 +545,6 @@ function exportPDF(pagesToExport) {
     image: { type:'jpeg', quality:0.98 },
     html2canvas: { scale:2, useCORS:true, logging:false },
     jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
-    pagebreak: { mode:'css', before:'.pb-page' },
   }).save().then(() => {
     document.body.removeChild(wrapper);
     showToast('PDF exported!');

@@ -10,7 +10,7 @@ html, body {
   color: #111827;
 }
 
-#app { display: flex; flex-direction: column; height: 100vh; }
+#app { display: flex; flex-direction: column; height: 100vh; border-radius: 0 0 10px 10px; overflow: hidden; }
 
 /* ─── Header ───────────────────────────────────────────────────────────────── */
 #header {

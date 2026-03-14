@@ -3,32 +3,29 @@
   "name": "Playbook",
   "version": "1.0",
   "description": "Floating sidebar to build, organize, and export interview prep notes with full rich-text formatting.",
-  "permissions": ["storage"],
-  "content_scripts": [
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
-      "run_at": "document_end"
-    }
-  ],
+  "permissions": ["storage", "activeTab", "scripting"],
+  "action": {
+    "default_title": "Open Playbook"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
   "web_accessible_resources": [
     {
       "resources": [
         "sidebar.html",
         "sidebar.css",
         "sidebar.js",
-        "lib/quill.min.js",
-        "lib/quill.snow.css",
         "lib/Sortable.min.js",
         "lib/html2pdf.bundle.min.js"
       ],
-      "matches": ["http://*/*", "https://*/*"]
+      "matches": ["<all_urls>"]
     }
   ],
   "icons": {
-    "16":  "icons/icon16.png",
-    "32":  "icons/icon32.png",
-    "48":  "icons/icon48.png",
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   }
 }

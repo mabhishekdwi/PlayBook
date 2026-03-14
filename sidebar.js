@@ -280,7 +280,9 @@ function loadFromStorage() {
   if (!ctxOk()) return;
   try {
     chrome.storage.local.get(['pb_pages','pb_active','pb_folders','pb_downloads'], (result) => {
-      if (chrome.runtime.lastError) return;
+      try {
+        if (chrome.runtime.lastError) return;
+      } catch (_) { return; }
       pages        = (result.pb_pages   || []).map((p) => ({ folderId: null, ...p }));
       folders      = result.pb_folders  || [];
       downloads    = result.pb_downloads || [];

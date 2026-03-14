@@ -149,7 +149,8 @@
   // iframe
   const frame = document.createElement('iframe');
   frame.id = '__pb_frame__';
-  frame.src = chrome.runtime.getURL('sidebar.html');
+  try { frame.src = chrome.runtime.getURL('sidebar.html'); }
+  catch (_) { container.remove(); toggle.remove(); return; }
   frame.allow = 'clipboard-write';
   container.appendChild(frame);
 

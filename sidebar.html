@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Interview Playbook</title>
+  <title>Playbook</title>
   <link rel="stylesheet" href="sidebar.css" />
 </head>
 <body>
@@ -33,11 +33,18 @@
       <!-- Pages Sidebar -->
       <aside id="pages-panel">
         <div id="pages-header">
+          <button id="btn-collapse-sidebar" title="Collapse sidebar">&#x2039;</button>
           <span class="panel-label">Pages</span>
-          <button id="btn-add-page" title="Add new page">+ New</button>
+          <div id="pages-header-actions">
+            <button id="btn-add-folder" title="New folder">&#128193;</button>
+            <button id="btn-add-page" title="Add new page">+ New</button>
+          </div>
         </div>
-        <ul id="pages-list"></ul>
+        <div id="pages-list"></div>
       </aside>
+
+      <!-- Sidebar resize handle -->
+      <div id="sidebar-resize-handle"></div>
 
       <!-- Editor -->
       <section id="editor-panel">
@@ -103,6 +110,12 @@
         <button class="modal-bulk-btn" id="modal-deselect-all">&#9633; Deselect all</button>
       </div>
       <ul id="pdf-page-list"></ul>
+      <div class="modal-merge-row">
+        <label class="modal-merge-label">
+          <input type="checkbox" id="pdf-merge-cb" />
+          Merge — no forced page breaks between pages
+        </label>
+      </div>
       <div class="modal-footer">
         <button class="modal-btn-cancel" id="modal-cancel">Cancel</button>
         <button class="modal-btn-export" id="modal-export">

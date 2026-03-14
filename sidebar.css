@@ -39,22 +39,55 @@ html, body {
   width: 172px; background: #1f2937;
   display: flex; flex-direction: column;
   flex-shrink: 0; border-right: 1px solid #111827; overflow: hidden;
+  transition: width 0.2s;
 }
+/* ── Collapsed sidebar ── */
+#pages-panel.pb-collapsed { width: 28px !important; min-width: 28px; }
+#pages-panel.pb-collapsed .panel-label,
+#pages-panel.pb-collapsed #pages-header-actions,
+#pages-panel.pb-collapsed #pages-list { display: none; }
+#pages-panel.pb-collapsed #pages-header { justify-content: center; padding: 10px 0; }
+#pages-panel.pb-collapsed #btn-collapse-sidebar { transform: scaleX(-1); }
+
 #pages-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px 9px; border-bottom: 1px solid #374151; flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 8px 8px 6px; border-bottom: 1px solid #374151; flex-shrink: 0;
 }
-.panel-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 1.2px; }
+.panel-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 1.2px; flex: 1; }
+#pages-header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+#btn-collapse-sidebar {
+  background: none; border: none; color: #6b7280; cursor: pointer;
+  padding: 2px 4px; font-size: 14px; font-weight: 700; border-radius: 4px;
+  line-height: 1; flex-shrink: 0; transition: color .15s, background .15s;
+}
+#btn-collapse-sidebar:hover { color: #d1d5db; background: rgba(255,255,255,.08); }
+
+#btn-add-folder {
+  background: none; color: #9ca3af; border: 1px solid #374151; border-radius: 5px;
+  padding: 3px 6px; font-size: 12px; cursor: pointer; transition: background .15s, color .15s;
+  line-height: 1;
+}
+#btn-add-folder:hover { background: rgba(255,255,255,.08); color: #f1f5f9; }
+
 #btn-add-page {
   background: #2563eb; color: #fff; border: none; border-radius: 5px;
   padding: 4px 9px; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .15s;
+  white-space: nowrap;
 }
 #btn-add-page:hover { background: #1d4ed8; }
 
-#pages-list { flex: 1; overflow-y: auto; padding: 5px 6px; list-style: none; }
+/* ── Sidebar resize handle ── */
+#sidebar-resize-handle {
+  width: 4px; flex-shrink: 0; cursor: col-resize;
+  background: transparent; transition: background 0.15s;
+}
+#sidebar-resize-handle:hover,
+#sidebar-resize-handle.dragging { background: #2563eb; }
+
+#pages-list { flex: 1; overflow-y: auto; padding: 4px 4px; }
 #pages-list::-webkit-scrollbar { width: 4px; }
 #pages-list::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
-
 .page-item {
   display: flex; align-items: center; gap: 5px; padding: 7px 9px; border-radius: 6px;
   cursor: pointer; color: #9ca3af; font-size: 12px; transition: background .12s, color .12s;
@@ -259,6 +292,39 @@ html, body {
 /* Images */
 #editor img { max-width: 100%; border-radius: 6px; margin: 8px 0; }
 
+/* ─── Folder items ─────────────────────────────────────────────────────────── */
+.folder-item { margin-bottom: 2px; }
+
+.folder-header {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 8px; border-radius: 6px; cursor: pointer;
+  color: #9ca3af; font-size: 12px; font-weight: 600;
+  user-select: none; transition: background .12s, color .12s;
+}
+.folder-header:hover { background: #2d3748; color: #d1d5db; }
+
+.folder-drag-handle { color: #4b5563; cursor: grab; font-size: 14px; flex-shrink: 0; }
+.folder-drag-handle:active { cursor: grabbing; }
+.folder-item.sortable-ghost { opacity: .35; }
+.folder-chevron { font-size: 10px; flex-shrink: 0; color: #6b7280; }
+.folder-icon    { font-size: 13px; flex-shrink: 0; }
+.folder-name    { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.folder-delete {
+  opacity: 0; background: none; border: none; color: #6b7280;
+  cursor: pointer; padding: 2px 3px; font-size: 12px; border-radius: 3px;
+  transition: opacity .15s, color .15s, background .15s; flex-shrink: 0;
+}
+.folder-header:hover .folder-delete        { opacity: 1; }
+.folder-header:hover .folder-delete:hover  { color: #fca5a5; background: rgba(239,68,68,.15); }
+
+.folder-pages {
+  list-style: none; padding-left: 14px; margin: 0;
+  border-left: 1px solid #374151; margin-left: 14px;
+}
+/* Collapsed folder hides its pages */
+.pb-folder-collapsed .folder-pages { display: none; }
+
 /* ─── Inline rename input (in pages list) ─────────────────────────────────── */
 .page-rename-input {
   flex: 1;
@@ -440,6 +506,20 @@ html, body {
   transition: background .15s;
 }
 .modal-btn-export:hover { background: #1d4ed8; }
+
+.modal-merge-row {
+  padding: 6px 18px 10px;
+  flex-shrink: 0;
+  border-top: 1px solid #f3f4f6;
+}
+.modal-merge-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: #374151; cursor: pointer;
+}
+.modal-merge-label input[type="checkbox"] { accent-color: #2563eb; cursor: pointer; }
+
+/* ─── Root pages group ─────────────────────────────────────────────────────── */
+#pages-root { list-style: none; margin: 0; padding: 0; min-height: 24px; }
 
 /* ─── Toast ────────────────────────────────────────────────────────────────── */
 .toast {

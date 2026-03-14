@@ -3,11 +3,15 @@
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let pages        = [];
+let folders      = [];      // [{ id, title, collapsed }]
 let activePageId = null;
 let saveTimer    = null;
-let sortable     = null;
+let sortables    = [];      // all Sortable instances (for cleanup)
 let isDirty      = false;
-let editor       = null;  // the contenteditable div
+let editor       = null;    // the contenteditable div
+let sidebarResizing  = false;
+let sidebarResizeX0  = 0;
+let sidebarResizeW0  = 0;
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -15,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initEditor();
   loadFromStorage();
   bindGlobalEvents();
+  initSidebarResize();
 });
 
 // ─── Editor ───────────────────────────────────────────────────────────────────
@@ -263,9 +268,10 @@ function sanitizePastedHtml(rawHtml) {
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 function loadFromStorage() {
-  chrome.storage.local.get(['pb_pages','pb_active'], (result) => {
-    pages        = result.pb_pages  || [];
-    activePageId = result.pb_active || null;
+  chrome.storage.local.get(['pb_pages','pb_active','pb_folders'], (result) => {
+    pages        = (result.pb_pages   || []).map((p) => ({ folderId: null, ...p }));
+    folders      = result.pb_folders  || [];
+    activePageId = result.pb_active   || null;
 
     if (pages.length === 0) {
       createPage('Getting Started', buildWelcomeContent(), false);
@@ -278,7 +284,7 @@ function loadFromStorage() {
 }
 
 function persist() {
-  chrome.storage.local.set({ pb_pages: pages, pb_active: activePageId });
+  chrome.storage.local.set({ pb_pages: pages, pb_active: activePageId, pb_folders: folders });
 }
 
 function scheduleSave() {
@@ -302,9 +308,9 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 function findPage(id) { return pages.find((p) => p.id === id); }
 function titleVal() { return document.getElementById('page-title-input').value.trim() || 'Untitled'; }
 
-function createPage(title = 'New Page', content = '', doFlush = true) {
+function createPage(title = 'New Page', content = '', doFlush = true, folderId = null) {
   if (doFlush) flushCurrentPage();
-  const page = { id: uid(), title, content };
+  const page = { id: uid(), title, content, folderId };
   pages.push(page);
   renderPagesList();
   activatePage(page.id);
@@ -325,6 +331,102 @@ function deletePage(id) {
   persist();
 }
 
+// ─── Folder CRUD ──────────────────────────────────────────────────────────────
+function createFolder(title = 'New Folder') {
+  flushCurrentPage();
+  const folder = { id: uid(), title, collapsed: false };
+  folders.push(folder);
+  renderPagesList();
+  persist();
+  // Immediately start rename
+  const folderEl = document.querySelector(`.folder-item[data-folder-id="${folder.id}"]`);
+  if (folderEl) startFolderRename(folder.id, folderEl.querySelector('.folder-name'));
+}
+
+function deleteFolder(id) {
+  pages.forEach((p) => { if (p.folderId === id) p.folderId = null; });
+  folders = folders.filter((f) => f.id !== id);
+  renderPagesList();
+  persist();
+}
+
+function toggleFolderCollapse(id) {
+  const folder = folders.find((f) => f.id === id);
+  if (!folder) return;
+  folder.collapsed = !folder.collapsed;
+  persist();
+  const folderEl = document.querySelector(`.folder-item[data-folder-id="${id}"]`);
+  if (folderEl) {
+    folderEl.classList.toggle('pb-folder-collapsed', folder.collapsed);
+    const chevron = folderEl.querySelector('.folder-chevron');
+    if (chevron) chevron.innerHTML = folder.collapsed ? '&#9654;' : '&#9660;';
+  }
+}
+
+function startFolderRename(id, nameEl) {
+  const folder = folders.find((f) => f.id === id);
+  if (!folder || !nameEl) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = folder.title;
+  input.className = 'page-rename-input';
+  nameEl.replaceWith(input);
+  input.focus(); input.select();
+  let committed = false;
+  function commit() {
+    if (committed) return; committed = true;
+    folder.title = input.value.trim() || 'Untitled Folder';
+    persist(); renderPagesList();
+  }
+  function cancel() {
+    if (committed) return; committed = true; renderPagesList();
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.removeEventListener('blur', commit); cancel(); }
+  });
+}
+
+// ─── Sidebar Collapse / Expand ────────────────────────────────────────────────
+function toggleSidebar() {
+  const panel  = document.getElementById('pages-panel');
+  const handle = document.getElementById('sidebar-resize-handle');
+  const btn    = document.getElementById('btn-collapse-sidebar');
+  const collapsed = panel.classList.toggle('pb-collapsed');
+  if (handle) handle.style.pointerEvents = collapsed ? 'none' : '';
+  btn.innerHTML = collapsed ? '&#x203a;' : '&#x2039;';
+  btn.title     = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+
+// ─── Sidebar Resize ───────────────────────────────────────────────────────────
+function initSidebarResize() {
+  const handle = document.getElementById('sidebar-resize-handle');
+  if (!handle) return;
+  handle.addEventListener('mousedown', (e) => {
+    if (document.getElementById('pages-panel').classList.contains('pb-collapsed')) return;
+    sidebarResizing = true;
+    sidebarResizeX0 = e.clientX;
+    sidebarResizeW0 = document.getElementById('pages-panel').offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!sidebarResizing) return;
+    const w = Math.max(110, Math.min(320, sidebarResizeW0 + e.clientX - sidebarResizeX0));
+    document.getElementById('pages-panel').style.width = w + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!sidebarResizing) return;
+    sidebarResizing = false;
+    document.getElementById('sidebar-resize-handle').classList.remove('dragging');
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  });
+}
+
 function activatePage(id) {
   const page = findPage(id);
   if (!page) return;
@@ -338,52 +440,147 @@ function activatePage(id) {
 
 // ─── Render Pages List ────────────────────────────────────────────────────────
 function renderPagesList() {
-  const list = document.getElementById('pages-list');
-  list.innerHTML = '';
+  const container = document.getElementById('pages-list');
+  container.innerHTML = '';
+  sortables.forEach((s) => { try { s.destroy(); } catch (_) {} });
+  sortables = [];
 
-  pages.forEach((page) => {
-    const li = document.createElement('li');
-    li.className = 'page-item' + (page.id === activePageId ? ' active' : '');
-    li.dataset.id = page.id;
-    li.innerHTML = `
-      <span class="drag-handle" title="Drag to reorder">⠿</span>
-      <span class="page-name" title="Double-click to rename">${esc(page.title)}</span>
-      <button class="page-delete" title="Delete page">✕</button>`;
+  // Render folders
+  folders.forEach((folder) => container.appendChild(createFolderEl(folder)));
 
-    // Single click → activate page
-    li.addEventListener('click', (e) => {
-      if (e.target.closest('.page-delete') || e.target.closest('.page-rename-input')) return;
-      activatePage(li.dataset.id);
-    });
+  // Render ungrouped pages
+  const rootList = document.createElement('ul');
+  rootList.className = 'pages-group';
+  rootList.id = 'pages-root';
+  pages.filter((p) => !p.folderId).forEach((p) => rootList.appendChild(createPageItemEl(p)));
+  container.appendChild(rootList);
 
-    // Double-click on name → inline rename
-    li.querySelector('.page-name').addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      startRename(li.dataset.id, li.querySelector('.page-name'));
-    });
+  // Init sortables on every pages-group (root + each folder)
+  initPageSortables();
+}
 
-    li.querySelector('.page-delete').addEventListener('click', (e) => {
-      e.stopPropagation();
-      deletePage(li.dataset.id);
-    });
+function createFolderEl(folder) {
+  const div = document.createElement('div');
+  div.className = 'folder-item' + (folder.collapsed ? ' pb-folder-collapsed' : '');
+  div.dataset.folderId = folder.id;
 
-    list.appendChild(li);
+  const header = document.createElement('div');
+  header.className = 'folder-header';
+  header.innerHTML = `
+    <span class="folder-drag-handle" title="Drag to reorder folder">&#10783;</span>
+    <span class="folder-chevron">${folder.collapsed ? '&#9654;' : '&#9660;'}</span>
+    <span class="folder-icon">&#128193;</span>
+    <span class="folder-name">${esc(folder.title)}</span>
+    <button class="folder-delete" title="Delete folder (pages moved to root)">&#10005;</button>`;
+
+  const pageList = document.createElement('ul');
+  pageList.className = 'pages-group folder-pages';
+  pageList.dataset.folderId = folder.id;
+  pages.filter((p) => p.folderId === folder.id).forEach((p) => pageList.appendChild(createPageItemEl(p)));
+
+  // Toggle on header click except delete button and drag handle
+  header.addEventListener('click', (e) => {
+    if (!e.target.closest('.folder-delete') && !e.target.closest('.folder-drag-handle')) {
+      toggleFolderCollapse(folder.id);
+    }
+  });
+  header.querySelector('.folder-name').addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    startFolderRename(folder.id, header.querySelector('.folder-name'));
+  });
+  header.querySelector('.folder-delete').addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteFolder(folder.id);
   });
 
-  if (sortable) { sortable.destroy(); sortable = null; }
-  if (window.Sortable) {
-    sortable = Sortable.create(list, {
+  div.appendChild(header);
+  div.appendChild(pageList);
+  return div;
+}
+
+function createPageItemEl(page) {
+  const li = document.createElement('li');
+  li.className = 'page-item' + (page.id === activePageId ? ' active' : '');
+  li.dataset.id = page.id;
+  li.innerHTML = `
+    <span class="drag-handle" title="Drag to reorder">&#10783;</span>
+    <span class="page-name" title="Double-click to rename">${esc(page.title)}</span>
+    <button class="page-delete" title="Delete page">&#10005;</button>`;
+
+  li.addEventListener('click', (e) => {
+    if (e.target.closest('.page-delete') || e.target.closest('.page-rename-input')) return;
+    activatePage(li.dataset.id);
+  });
+  li.querySelector('.page-name').addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    startRename(li.dataset.id, li.querySelector('.page-name'));
+  });
+  li.querySelector('.page-delete').addEventListener('click', (e) => {
+    e.stopPropagation();
+    deletePage(li.dataset.id);
+  });
+  return li;
+}
+
+function initPageSortables() {
+  if (!window.Sortable) return;
+
+  // ── Folder reorder: drag folders within #pages-list ──
+  const pagesList = document.getElementById('pages-list');
+  if (pagesList) {
+    const fs = Sortable.create(pagesList, {
+      animation: 150,
+      handle: '.folder-drag-handle',
+      draggable: '.folder-item',
+      ghostClass: 'sortable-ghost',
+      onEnd(evt) {
+        // Rebuild folders array to match DOM order
+        const newFolders = [];
+        pagesList.querySelectorAll('.folder-item[data-folder-id]').forEach((el) => {
+          const f = folders.find((fd) => fd.id === el.dataset.folderId);
+          if (f) newFolders.push(f);
+        });
+        folders = newFolders;
+        persist();
+      },
+    });
+    sortables.push(fs);
+  }
+
+  // ── Page reorder + cross-folder drag ──
+  document.querySelectorAll('.pages-group').forEach((list) => {
+    const s = Sortable.create(list, {
+      group: { name: 'pb-pages', pull: true, put: true },
       animation: 150,
       handle: '.drag-handle',
       ghostClass: 'sortable-ghost',
       onEnd(evt) {
-        if (evt.oldIndex === evt.newIndex) return;
-        const [m] = pages.splice(evt.oldIndex, 1);
-        pages.splice(evt.newIndex, 0, m);
+        const movedId     = evt.item.dataset.id;
+        const newFolderId = evt.to.dataset.folderId || null;
+        const pg = pages.find((p) => p.id === movedId);
+        if (pg) pg.folderId = newFolderId;
+        rebuildPagesOrder();
         persist();
+        highlightActive();
       },
     });
-  }
+    sortables.push(s);
+  });
+}
+
+function rebuildPagesOrder() {
+  const pageMap = new Map(pages.map((p) => [p.id, p]));
+  const ordered = [];
+  document.querySelectorAll('.page-item[data-id]').forEach((item) => {
+    const pg = pageMap.get(item.dataset.id);
+    if (!pg) return;
+    const parentList = item.closest('.pages-group');
+    pg.folderId = parentList ? (parentList.dataset.folderId || null) : null;
+    ordered.push(pg);
+  });
+  // Safety net — keep any pages missing from DOM
+  pageMap.forEach((pg) => { if (!ordered.find((p) => p.id === pg.id)) ordered.push(pg); });
+  pages = ordered;
 }
 
 // ─── Inline Rename ────────────────────────────────────────────────────────────
@@ -440,6 +637,8 @@ function syncListTitle(id, title) {
 // ─── Global Events ────────────────────────────────────────────────────────────
 function bindGlobalEvents() {
   document.getElementById('btn-add-page').addEventListener('click', () => createPage());
+  document.getElementById('btn-add-folder').addEventListener('click', () => createFolder());
+  document.getElementById('btn-collapse-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btn-delete-page').addEventListener('click', () => {
     if (activePageId) deletePage(activePageId);
   });
@@ -464,8 +663,9 @@ function bindGlobalEvents() {
       Array.from(document.querySelectorAll('.pdf-cb:checked')).map((cb) => cb.dataset.id)
     );
     if (selectedIds.size === 0) { showToast('Select at least one page'); return; }
+    const merged = document.getElementById('pdf-merge-cb').checked;
     closePdfModal();
-    exportPDF(pages.filter((p) => selectedIds.has(p.id)));
+    exportPDF(pages.filter((p) => selectedIds.has(p.id)), merged);
   });
   // Click outside modal to close
   document.getElementById('pdf-modal').addEventListener('click', (e) => {
@@ -502,14 +702,14 @@ function closePdfModal() {
 }
 
 // ─── Export PDF ───────────────────────────────────────────────────────────────
-function exportPDF(pagesToExport) {
-  // pagesToExport comes from the modal selection; fall back to all pages
+function exportPDF(pagesToExport, merged = false) {
   const pgs = (pagesToExport && pagesToExport.length) ? pagesToExport : pages;
   flushCurrentPage();
   showToast('Generating PDF…');
 
-  const pagesHtml = pgs.map((p) => `
-    <div class="pb-page">
+  // Use page-break-before on every page except the first to avoid blank trailing pages
+  const pagesHtml = pgs.map((p, i) => `
+    <div class="pb-page${!merged && i > 0 ? ' pb-break' : ''}">
       <h1 class="pb-title">${esc(p.title)}</h1>
       <div class="pb-body">${p.content || '<p><em>Empty page</em></p>'}</div>
     </div>`).join('');
@@ -518,8 +718,8 @@ function exportPDF(pagesToExport) {
   wrapper.innerHTML = `<style>
     *{box-sizing:border-box}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#111827}
-    .pb-page{padding:16px 24px;page-break-after:always}
-    .pb-page:last-child{page-break-after:avoid}
+    .pb-page{padding:16px 24px 24px}
+    .pb-break{page-break-before:always}
     .pb-title{font-size:20px;font-weight:800;margin:0 0 12px;padding-bottom:8px;border-bottom:2px solid #e5e7eb;color:#111827}
     .pb-body{line-height:1.7}
     .pb-body h1{font-size:18px;font-weight:800;margin:14px 0 6px;padding-bottom:6px;border-bottom:1px solid #e5e7eb}
@@ -539,19 +739,37 @@ function exportPDF(pagesToExport) {
   </style>${pagesHtml}`;
 
   document.body.appendChild(wrapper);
-  html2pdf().from(wrapper).set({
-    margin: [8,8,8,8],
-    filename: 'interview-playbook.pdf',
-    image: { type:'jpeg', quality:0.98 },
-    html2canvas: { scale:2, useCORS:true, logging:false },
-    jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
-  }).save().then(() => {
-    document.body.removeChild(wrapper);
-    showToast('PDF exported!');
-  }).catch(() => {
-    document.body.removeChild(wrapper);
-    showToast('PDF export failed');
-  });
+  html2pdf()
+    .from(wrapper)
+    .set({
+      margin: [8, 8, 14, 8], // extra bottom margin for page numbers
+      filename: 'playbook.pdf',
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    })
+    .toPdf()
+    .get('pdf')
+    .then((pdf) => {
+      const total = pdf.internal.getNumberOfPages();
+      const pw    = pdf.internal.pageSize.getWidth();
+      const ph    = pdf.internal.pageSize.getHeight();
+      for (let i = 1; i <= total; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(160, 160, 160);
+        pdf.text(`${i} / ${total}`, pw / 2, ph - 4, { align: 'center' });
+      }
+    })
+    .save()
+    .then(() => {
+      document.body.removeChild(wrapper);
+      showToast('PDF exported!');
+    })
+    .catch(() => {
+      document.body.removeChild(wrapper);
+      showToast('PDF export failed');
+    });
 }
 
 // ─── Copy All ─────────────────────────────────────────────────────────────────
@@ -589,7 +807,7 @@ function showToast(msg) {
 
 // ─── Welcome Content ──────────────────────────────────────────────────────────
 function buildWelcomeContent() {
-  return `<h1>Welcome to Interview Playbook 🎯</h1>
+  return `<h1>Welcome to Playbook 🎯</h1>
 <p>Your personal workspace for organising interview prep. <strong>Paste ChatGPT responses directly</strong> — all formatting is preserved: headings, code blocks, lists, tables, and callouts.</p>
 <h2>Quick Start</h2>
 <ul>

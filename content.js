@@ -31,12 +31,12 @@
       line-height: 1; user-select: none;
       transition: background 0.2s;
     }
-    #__pb_toggle__:hover { background: #1d4ed8; }
+    #__pb_toggle__:hover { filter: brightness(0.85); }
 
     /* ── Floating window container ── */
     #__pb_container__ {
       position: fixed;
-      top: 60px; right: 60px;
+      top: 0; right: 0;
       width: ${DEFAULT_W}px; height: ${DEFAULT_H}px;
       min-width: ${MIN_W}px; min-height: ${MIN_H}px;
       z-index: 2147483647;
@@ -118,7 +118,7 @@
   const toggle = document.createElement('button');
   toggle.id = '__pb_toggle__';
   toggle.textContent = 'Playbook';
-  toggle.title = 'Open Interview Playbook';
+  toggle.title = 'Open Playbook';
   document.body.appendChild(toggle);
 
   /* ── Floating container ────────────────────────────────────────────────────── */
@@ -137,7 +137,7 @@
   const titlebar = document.createElement('div');
   titlebar.id = '__pb_titlebar__';
   titlebar.innerHTML = `
-    <span class="pb-title-text">Interview Playbook</span>
+    <span class="pb-title-text">Playbook</span>
     <div class="pb-win-btns">
       <button class="pb-win-btn" id="pb-btn-minimize" title="Minimize">&#x2212;</button>
       <button class="pb-win-btn" id="pb-btn-maximize" title="Maximize / Restore">&#x25A1;</button>
@@ -156,10 +156,25 @@
   document.body.appendChild(container);
 
   /* ── Window state helpers ──────────────────────────────────────────────────── */
+  /* ── Position the toggle tab attached to the LEFT edge of the panel ── */
+  function positionToggleOnPanel() {
+    if (!isOpen) return;
+    const r = container.getBoundingClientRect();
+    toggle.style.position     = 'fixed';
+    toggle.style.right        = 'auto';
+    toggle.style.left         = r.left + 'px';
+    toggle.style.top          = Math.max(10, r.top + r.height / 2) + 'px';
+    toggle.style.transform    = 'translateX(-100%) translateY(-50%)';
+    toggle.style.borderRadius = '10px 0 0 10px';
+  }
+
   function openWindow() {
     isOpen = true;
     container.classList.add('pb-open');
-    toggle.style.display = 'none';
+    toggle.textContent = 'Close';
+    toggle.title = 'Close Playbook';
+    toggle.style.background = '#dc2626';
+    positionToggleOnPanel();
   }
 
   function closeWindow() {
@@ -167,7 +182,9 @@
     isMinimized = false;
     isMaximized = false;
     container.classList.remove('pb-open', 'pb-minimized', 'pb-maximized');
-    toggle.style.display = '';
+    toggle.textContent = 'Playbook';
+    toggle.title = 'Open Playbook';
+    toggle.style.cssText = ''; // restore CSS defaults (right:0, top:50%, etc.)
   }
 
   function minimizeWindow() {
@@ -215,7 +232,7 @@
     }
   }
 
-  toggle.addEventListener('click', openWindow);
+  toggle.addEventListener('click', () => isOpen ? closeWindow() : openWindow());
   document.getElementById('pb-btn-close').addEventListener('click', closeWindow);
   document.getElementById('pb-btn-minimize').addEventListener('click', minimizeWindow);
   document.getElementById('pb-btn-maximize').addEventListener('click', toggleMaximize);
@@ -249,6 +266,7 @@
     if (!dragging) return;
     container.style.left = (dragOrigLeft + e.clientX - dragStartX) + 'px';
     container.style.top  = (dragOrigTop  + e.clientY - dragStartY) + 'px';
+    positionToggleOnPanel();
   });
 
   document.addEventListener('mouseup', () => {
@@ -297,6 +315,7 @@
     container.style.top    = t + 'px';
     container.style.width  = w + 'px';
     container.style.height = h + 'px';
+    positionToggleOnPanel();
   });
 
   document.addEventListener('mouseup', () => {

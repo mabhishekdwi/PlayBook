@@ -4,14 +4,16 @@
 // ─── State ────────────────────────────────────────────────────────────────────
 let pages        = [];
 let folders      = [];      // [{ id, title, collapsed }]
+let downloads    = [];      // [{ id, filename, date, pageCount, pageNames, folderNames }]
 let activePageId = null;
 let saveTimer    = null;
 let sortables    = [];      // all Sortable instances (for cleanup)
 let isDirty      = false;
 let editor       = null;    // the contenteditable div
-let sidebarResizing  = false;
-let sidebarResizeX0  = 0;
-let sidebarResizeW0  = 0;
+let sidebarResizing   = false;
+let sidebarResizeX0   = 0;
+let sidebarResizeW0   = 0;
+let downloadsExpanded = true;
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -267,24 +269,41 @@ function sanitizePastedHtml(rawHtml) {
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
-function loadFromStorage() {
-  chrome.storage.local.get(['pb_pages','pb_active','pb_folders'], (result) => {
-    pages        = (result.pb_pages   || []).map((p) => ({ folderId: null, ...p }));
-    folders      = result.pb_folders  || [];
-    activePageId = result.pb_active   || null;
+function ctxOk() {
+  // Returns false when the extension has been reloaded/updated and this page
+  // still holds the old (invalidated) context. All storage calls must check this.
+  try { return !!(chrome && chrome.runtime && chrome.runtime.id); }
+  catch (_) { return false; }
+}
 
-    if (pages.length === 0) {
-      createPage('Getting Started', buildWelcomeContent(), false);
-    } else {
-      renderPagesList();
-      const target = pages.find((p) => p.id === activePageId) || pages[0];
-      activatePage(target.id);
-    }
-  });
+function loadFromStorage() {
+  if (!ctxOk()) return;
+  try {
+    chrome.storage.local.get(['pb_pages','pb_active','pb_folders','pb_downloads'], (result) => {
+      if (chrome.runtime.lastError) return;
+      pages        = (result.pb_pages   || []).map((p) => ({ folderId: null, ...p }));
+      folders      = result.pb_folders  || [];
+      downloads    = result.pb_downloads || [];
+      activePageId = result.pb_active   || null;
+
+      renderDownloads();
+
+      if (pages.length === 0) {
+        createPage('Getting Started', buildWelcomeContent(), false);
+      } else {
+        renderPagesList();
+        const target = pages.find((p) => p.id === activePageId) || pages[0];
+        activatePage(target.id);
+      }
+    });
+  } catch (_) {}
 }
 
 function persist() {
-  chrome.storage.local.set({ pb_pages: pages, pb_active: activePageId, pb_folders: folders });
+  if (!ctxOk()) return;
+  try {
+    chrome.storage.local.set({ pb_pages: pages, pb_active: activePageId, pb_folders: folders, pb_downloads: downloads });
+  } catch (_) {}
 }
 
 function scheduleSave() {
@@ -296,9 +315,11 @@ function flushCurrentPage() {
   if (!activePageId || !isDirty) return;
   const page = findPage(activePageId);
   if (!page) return;
-  page.content = getContent();
-  page.title   = titleVal();
+  page.content   = getContent();
+  page.title     = titleVal();
+  page.updatedAt = new Date().toISOString();
   syncListTitle(page.id, page.title);
+  syncListDate(page.id, page.updatedAt);
   persist();
   isDirty = false;
 }
@@ -307,10 +328,27 @@ function flushCurrentPage() {
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function findPage(id) { return pages.find((p) => p.id === id); }
 function titleVal() { return document.getElementById('page-title-input').value.trim() || 'Untitled'; }
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+function fmtShortDate(iso) {
+  if (!iso) return '';
+  const d   = new Date(iso);
+  const now = new Date();
+  const opts = d.getFullYear() === now.getFullYear()
+    ? { month: 'short', day: 'numeric' }
+    : { month: 'short', day: 'numeric', year: 'numeric' };
+  return d.toLocaleDateString(undefined, opts)
+    + ' · ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
 
 function createPage(title = 'New Page', content = '', doFlush = true, folderId = null) {
   if (doFlush) flushCurrentPage();
-  const page = { id: uid(), title, content, folderId };
+  const now = new Date().toISOString();
+  const page = { id: uid(), title, content, folderId, createdAt: now, updatedAt: now };
   pages.push(page);
   renderPagesList();
   activatePage(page.id);
@@ -334,7 +372,8 @@ function deletePage(id) {
 // ─── Folder CRUD ──────────────────────────────────────────────────────────────
 function createFolder(title = 'New Folder') {
   flushCurrentPage();
-  const folder = { id: uid(), title, collapsed: false };
+  const now = new Date().toISOString();
+  const folder = { id: uid(), title, collapsed: false, createdAt: now, updatedAt: now };
   folders.push(folder);
   renderPagesList();
   persist();
@@ -359,7 +398,7 @@ function toggleFolderCollapse(id) {
   if (folderEl) {
     folderEl.classList.toggle('pb-folder-collapsed', folder.collapsed);
     const chevron = folderEl.querySelector('.folder-chevron');
-    if (chevron) chevron.innerHTML = folder.collapsed ? '&#9654;' : '&#9660;';
+    if (chevron) chevron.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="${folder.collapsed ? '9 18 15 12 9 6' : '6 9 12 15 18 9'}"/></svg>`;
   }
 }
 
@@ -376,6 +415,7 @@ function startFolderRename(id, nameEl) {
   function commit() {
     if (committed) return; committed = true;
     folder.title = input.value.trim() || 'Untitled Folder';
+    folder.updatedAt = new Date().toISOString();
     persist(); renderPagesList();
   }
   function cancel() {
@@ -403,10 +443,112 @@ function toggleSidebar() {
   btn.setAttribute('aria-label', btn.title);
 }
 
+// ─── Downloads Section ────────────────────────────────────────────────────────
+const DOWNLOADS_REVEAL_WIDTH = 200; // px — sidebar must be dragged wider than this to show the section
+
+function updateDownloadsVisibility(width) {
+  const panel = document.getElementById('pages-panel');
+  if (panel) panel.classList.toggle('downloads-visible', width > DOWNLOADS_REVEAL_WIDTH);
+}
+
+function toggleDownloads() {
+  downloadsExpanded = !downloadsExpanded;
+  const section = document.getElementById('downloads-section');
+  const list    = document.getElementById('downloads-list');
+  const arrow   = section.querySelector('.downloads-arrow');
+  section.classList.toggle('expanded', downloadsExpanded);
+  list.hidden = !downloadsExpanded;
+  if (arrow) {
+    arrow.style.transform = downloadsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+  }
+}
+
+function renderDownloads() {
+  const list = document.getElementById('downloads-list');
+  if (!list) return;
+
+  // Bind header click once
+  const header = document.getElementById('downloads-header');
+  if (header && !header._bound) {
+    header._bound = true;
+    header.addEventListener('click', toggleDownloads);
+  }
+
+  list.innerHTML = '';
+  list.hidden = !downloadsExpanded;
+
+  // Keep arrow state in sync
+  const arrow = document.querySelector('#downloads-section .downloads-arrow');
+  if (arrow) arrow.style.transform = downloadsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+
+  if (downloads.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'downloads-empty';
+    empty.textContent = 'No downloads yet';
+    list.appendChild(empty);
+    return;
+  }
+
+  downloads.forEach((dl) => {
+    const item = document.createElement('div');
+    item.className = 'download-item';
+
+    const d = new Date(dl.date);
+    const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+    const folderInfo = dl.folderNames && dl.folderNames.length
+      ? dl.folderNames.join(', ')
+      : 'Root';
+
+    // Support both old (pageNames[]) and new (pages[]) format
+    const dlPages = dl.pages || (dl.pageNames || []).map((n) => ({ title: n }));
+    const pagesPreview = dlPages.slice(0, 3).map((p) => esc(p.title)).join(', ')
+      + (dlPages.length > 3 ? ` +${dlPages.length - 3} more` : '');
+
+    // Tooltip: list each page with its updated date
+    const pagesTooltip = dlPages.map((p) =>
+      p.updatedAt ? `${p.title} (updated ${fmtDate(p.updatedAt)})` : p.title
+    ).join('\n');
+
+    item.innerHTML = `
+      <div class="dl-filename">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        ${esc(dl.filename)}
+      </div>
+      <div class="dl-meta">Downloaded: ${dateStr} ${timeStr}</div>
+      <div class="dl-meta">${dl.pageCount} page${dl.pageCount !== 1 ? 's' : ''} · ${esc(folderInfo)}</div>
+      <div class="dl-pages" title="${esc(pagesTooltip)}">${pagesPreview}</div>
+    `;
+
+    // Delete button
+    const delBtn = document.createElement('button');
+    delBtn.className = 'dl-delete';
+    delBtn.title = 'Remove from history';
+    delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      downloads = downloads.filter((d) => d.id !== dl.id);
+      persist();
+      renderDownloads();
+    });
+    item.appendChild(delBtn);
+
+    // Click item to preview PDF
+    item.addEventListener('click', (e) => {
+      if (!e.target.closest('.dl-delete')) previewDownload(dl);
+    });
+
+    list.appendChild(item);
+  });
+}
+
 // ─── Sidebar Resize ───────────────────────────────────────────────────────────
 function initSidebarResize() {
   const handle = document.getElementById('sidebar-resize-handle');
   if (!handle) return;
+  // Set initial visibility based on default panel width
+  updateDownloadsVisibility(document.getElementById('pages-panel').offsetWidth);
   handle.addEventListener('mousedown', (e) => {
     if (document.getElementById('pages-panel').classList.contains('pb-collapsed')) return;
     sidebarResizing = true;
@@ -421,6 +563,7 @@ function initSidebarResize() {
     if (!sidebarResizing) return;
     const w = Math.max(110, Math.min(320, sidebarResizeW0 + e.clientX - sidebarResizeX0));
     document.getElementById('pages-panel').style.width = w + 'px';
+    updateDownloadsVisibility(w);
   });
   document.addEventListener('mouseup', () => {
     if (!sidebarResizing) return;
@@ -434,6 +577,7 @@ function initSidebarResize() {
 function activatePage(id) {
   const page = findPage(id);
   if (!page) return;
+  closePreviewModal();
   flushCurrentPage();
   activePageId = id;
   document.getElementById('page-title-input').value = page.title;
@@ -470,12 +614,22 @@ function createFolderEl(folder) {
 
   const header = document.createElement('div');
   header.className = 'folder-header';
+  const fdTip = `Created: ${fmtDate(folder.createdAt)}\nUpdated: ${fmtDate(folder.updatedAt)}`;
   header.innerHTML = `
     <span class="folder-drag-handle" title="Drag to reorder folder">&#10783;</span>
-    <span class="folder-chevron">${folder.collapsed ? '&#9654;' : '&#9660;'}</span>
-    <span class="folder-icon">&#128193;</span>
-    <span class="folder-name">${esc(folder.title)}</span>
-    <button class="folder-delete" title="Delete folder (pages moved to root)">&#10005;</button>`;
+    <span class="folder-chevron">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="${folder.collapsed ? '9 18 15 12 9 6' : '6 9 12 15 18 9'}"/></svg>
+    </span>
+    <span class="folder-icon">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    </span>
+    <span class="folder-info">
+      <span class="folder-name" title="${esc(fdTip)}">${esc(folder.title)}</span>
+      <span class="folder-date">${fmtShortDate(folder.updatedAt || folder.createdAt)}</span>
+    </span>
+    <button class="folder-delete" title="Delete folder (pages moved to root)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </button>`;
 
   const pageList = document.createElement('ul');
   pageList.className = 'pages-group folder-pages';
@@ -506,16 +660,32 @@ function createPageItemEl(page) {
   const li = document.createElement('li');
   li.className = 'page-item' + (page.id === activePageId ? ' active' : '');
   li.dataset.id = page.id;
+  const pgTip = `Created: ${fmtDate(page.createdAt)}\nUpdated: ${fmtDate(page.updatedAt)}`;
   li.innerHTML = `
     <span class="drag-handle" title="Drag to reorder">&#10783;</span>
-    <span class="page-name" title="Double-click to rename">${esc(page.title)}</span>
-    <button class="page-delete" title="Delete page">&#10005;</button>`;
+    <span class="page-icon" aria-hidden="true">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    </span>
+    <span class="page-info">
+      <span class="page-name" title="${esc(pgTip)}">${esc(page.title)}</span>
+      <span class="page-date">${fmtShortDate(page.updatedAt || page.createdAt)}</span>
+    </span>
+    <button class="page-action-btn page-rename-btn" title="Rename">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+    </button>
+    <button class="page-action-btn page-delete" title="Delete page">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </button>`;
 
   li.addEventListener('click', (e) => {
-    if (e.target.closest('.page-delete') || e.target.closest('.page-rename-input')) return;
+    if (e.target.closest('.page-action-btn') || e.target.closest('.page-rename-input')) return;
     activatePage(li.dataset.id);
   });
   li.querySelector('.page-name').addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    startRename(li.dataset.id, li.querySelector('.page-name'));
+  });
+  li.querySelector('.page-rename-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     startRename(li.dataset.id, li.querySelector('.page-name'));
   });
@@ -637,6 +807,10 @@ function syncListTitle(id, title) {
   const el = document.querySelector(`.page-item[data-id="${id}"] .page-name`);
   if (el) el.textContent = title;
 }
+function syncListDate(id, iso) {
+  const el = document.querySelector(`.page-item[data-id="${id}"] .page-date`);
+  if (el) el.textContent = fmtShortDate(iso);
+}
 
 // ─── Global Events ────────────────────────────────────────────────────────────
 function bindGlobalEvents() {
@@ -676,8 +850,19 @@ function bindGlobalEvents() {
     if (e.target === e.currentTarget) closePdfModal();
   });
 
+  // Preview panel controls
+  document.getElementById('preview-download-btn').addEventListener('click', () => {
+    const btn = document.getElementById('preview-download-btn');
+    if (btn._dlUrl) {
+      const a = document.createElement('a');
+      a.href = btn._dlUrl;
+      a.download = btn._dlFilename || 'playbook.pdf';
+      a.click();
+    }
+  });
+
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closePdfModal();
+    if (e.key === 'Escape') { closePdfModal(); closePreviewModal(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
       flushCurrentPage();
@@ -711,7 +896,6 @@ function exportPDF(pagesToExport, merged = false) {
   flushCurrentPage();
   showToast('Generating PDF…');
 
-  // Use page-break-before on every page except the first to avoid blank trailing pages
   const pagesHtml = pgs.map((p, i) => `
     <div class="pb-page${!merged && i > 0 ? ' pb-break' : ''}">
       <h1 class="pb-title">${esc(p.title)}</h1>
@@ -722,7 +906,8 @@ function exportPDF(pagesToExport, merged = false) {
   wrapper.innerHTML = `<style>
     *{box-sizing:border-box}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#111827}
-    .pb-page{padding:16px 24px 24px}
+    .pb-page{padding:16px 24px 16px}
+    .pb-page:last-child{padding-bottom:2px;page-break-after:avoid}
     .pb-break{page-break-before:always}
     .pb-title{font-size:20px;font-weight:800;margin:0 0 12px;padding-bottom:8px;border-bottom:2px solid #e5e7eb;color:#111827}
     .pb-body{line-height:1.7}
@@ -746,18 +931,24 @@ function exportPDF(pagesToExport, merged = false) {
   html2pdf()
     .from(wrapper)
     .set({
-      margin: [8, 8, 14, 8], // extra bottom margin for page numbers
+      margin: [8, 8, 12, 8],
       filename: 'playbook.pdf',
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], before: '.pb-break' },
     })
     .toPdf()
     .get('pdf')
     .then((pdf) => {
-      const total = pdf.internal.getNumberOfPages();
-      const pw    = pdf.internal.pageSize.getWidth();
-      const ph    = pdf.internal.pageSize.getHeight();
+      // Remove blank trailing page (html2pdf artifact from content height rounding)
+      let total = pdf.internal.getNumberOfPages();
+      if (total > 1) {
+        const lastContent = (pdf.internal.pages[total] || []).join('');
+        if (lastContent.length < 100) { pdf.deletePage(total); total--; }
+      }
+      const pw = pdf.internal.pageSize.getWidth();
+      const ph = pdf.internal.pageSize.getHeight();
       for (let i = 1; i <= total; i++) {
         pdf.setPage(i);
         pdf.setFontSize(8);
@@ -768,12 +959,147 @@ function exportPDF(pagesToExport, merged = false) {
     .save()
     .then(() => {
       document.body.removeChild(wrapper);
+      // Record download history
+      const folderSet = new Set(pgs.map((p) => p.folderId).filter(Boolean));
+      const folderNames = [...folderSet].map((fid) => {
+        const f = folders.find((fd) => fd.id === fid);
+        return f ? f.title : null;
+      }).filter(Boolean);
+      downloads.unshift({
+        id: uid(),
+        filename: 'playbook.pdf',
+        date: new Date().toISOString(),
+        pageCount: pgs.length,
+        pageNames: pgs.map((p) => p.title),
+        pageIds: pgs.map((p) => p.id),
+        pages: pgs.map((p) => ({ title: p.title, createdAt: p.createdAt, updatedAt: p.updatedAt })),
+        folderNames,
+      });
+      if (downloads.length > 50) downloads.length = 50; // cap history
+      persist();
+      renderDownloads();
       showToast('PDF exported!');
     })
     .catch(() => {
       document.body.removeChild(wrapper);
       showToast('PDF export failed');
     });
+}
+
+// ─── PDF Preview ──────────────────────────────────────────────────────────────
+let currentPreviewUrl = null;
+
+function previewDownload(dl) {
+  // Resolve pages by stored IDs (new records), fall back to title match (old records)
+  let pgsToRender = [];
+  if (dl.pageIds && dl.pageIds.length) {
+    pgsToRender = dl.pageIds.map((id) => pages.find((p) => p.id === id)).filter(Boolean);
+  }
+  if (pgsToRender.length === 0 && dl.pages) {
+    pgsToRender = dl.pages
+      .map((dp) => pages.find((p) => p.title === dp.title))
+      .filter(Boolean);
+  }
+  if (pgsToRender.length === 0) {
+    showToast('Page content is no longer available');
+    return;
+  }
+
+  showToast('Generating preview…');
+  flushCurrentPage();
+
+  const pagesHtml = pgsToRender.map((p, i) => `
+    <div class="pb-page${i > 0 ? ' pb-break' : ''}">
+      <h1 class="pb-title">${esc(p.title)}</h1>
+      <div class="pb-body">${p.content || '<p><em>Empty page</em></p>'}</div>
+    </div>`).join('');
+
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = `<style>
+    *{box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#111827}
+    .pb-page{padding:16px 24px 16px}
+    .pb-page:last-child{padding-bottom:2px;page-break-after:avoid}
+    .pb-break{page-break-before:always}
+    .pb-title{font-size:20px;font-weight:800;margin:0 0 12px;padding-bottom:8px;border-bottom:2px solid #e5e7eb;color:#111827}
+    .pb-body{line-height:1.7}
+    .pb-body h1{font-size:18px;font-weight:800;margin:14px 0 6px;padding-bottom:6px;border-bottom:1px solid #e5e7eb}
+    .pb-body h2{font-size:15px;font-weight:700;margin:12px 0 5px}
+    .pb-body h3{font-size:13px;font-weight:700;margin:10px 0 4px}
+    .pb-body p{margin-bottom:7px}
+    .pb-body ul,.pb-body ol{padding-left:22px;margin-bottom:8px}
+    .pb-body li{margin-bottom:3px}
+    .pb-body .code-block,.pb-body pre{background:#0d1117;color:#c9d1d9;border-radius:6px;padding:12px 14px;font-family:'Courier New',monospace;font-size:11.5px;margin:10px 0;white-space:pre-wrap;word-break:break-all;border:1px solid #30363d}
+    .pb-body code{background:#f3f4f6;color:#be185d;padding:1px 4px;border-radius:3px;font-family:'Courier New',monospace;font-size:11px}
+    .pb-body blockquote{border-left:4px solid #2563eb;background:#eff6ff;color:#1d4ed8;margin:10px 0;padding:8px 12px;border-radius:0 6px 6px 0}
+    .pb-body table{border-collapse:collapse;width:100%;margin:10px 0;font-size:12px}
+    .pb-body td,.pb-body th{border:1px solid #e5e7eb;padding:6px 10px}
+    .pb-body th{background:#f3f4f6;font-weight:700}
+    .pb-body tr:nth-child(even) td{background:#f9fafb}
+    .pb-body strong{color:#111827}
+  </style>${pagesHtml}`;
+
+  document.body.appendChild(wrapper);
+  html2pdf()
+    .from(wrapper)
+    .set({
+      margin: [8, 8, 12, 8],
+      filename: dl.filename,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], before: '.pb-break' },
+    })
+    .toPdf()
+    .get('pdf')
+    .then((pdf) => {
+      // Remove blank trailing page (html2pdf artifact from content height rounding)
+      let total = pdf.internal.getNumberOfPages();
+      if (total > 1) {
+        const lastContent = (pdf.internal.pages[total] || []).join('');
+        if (lastContent.length < 100) { pdf.deletePage(total); total--; }
+      }
+      const pw = pdf.internal.pageSize.getWidth();
+      const ph = pdf.internal.pageSize.getHeight();
+      for (let i = 1; i <= total; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(160, 160, 160);
+        pdf.text(`${i} / ${total}`, pw / 2, ph - 4, { align: 'center' });
+      }
+      document.body.removeChild(wrapper);
+      const blobUrl = pdf.output('bloburl');
+      openPreviewModal(blobUrl, dl.filename);
+    })
+    .catch(() => {
+      if (wrapper.parentNode) document.body.removeChild(wrapper);
+      showToast('Preview generation failed');
+    });
+}
+
+function openPreviewModal(blobUrl, filename) {
+  if (currentPreviewUrl) URL.revokeObjectURL(currentPreviewUrl);
+  currentPreviewUrl = blobUrl;
+  document.getElementById('preview-filename').textContent = filename;
+  document.getElementById('preview-iframe').src = blobUrl;
+  const dlBtn = document.getElementById('preview-download-btn');
+  dlBtn._dlUrl      = blobUrl;
+  dlBtn._dlFilename = filename;
+  // Show preview panel, hide editor
+  document.getElementById('editor-header').hidden  = true;
+  document.getElementById('toolbar').hidden         = true;
+  document.getElementById('editor-scroll').hidden   = true;
+  document.getElementById('pdf-preview-panel').removeAttribute('hidden');
+}
+
+function closePreviewModal() {
+  document.getElementById('pdf-preview-panel').setAttribute('hidden', '');
+  document.getElementById('preview-iframe').src = '';
+  if (currentPreviewUrl) { URL.revokeObjectURL(currentPreviewUrl); currentPreviewUrl = null; }
+  // Restore editor
+  document.getElementById('editor-header').hidden  = false;
+  document.getElementById('toolbar').hidden         = false;
+  document.getElementById('editor-scroll').hidden   = false;
 }
 
 // ─── Copy All ─────────────────────────────────────────────────────────────────

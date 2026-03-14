@@ -44,10 +44,10 @@ html, body {
 /* ── Collapsed sidebar ── */
 #pages-panel.pb-collapsed { width: 28px !important; min-width: 28px; }
 #pages-panel.pb-collapsed .panel-label,
-#pages-panel.pb-collapsed #pages-header-actions,
 #pages-panel.pb-collapsed #pages-list { display: none; }
+#pages-panel.pb-collapsed #pages-header-actions > :not(#btn-collapse-sidebar) { display: none; }
 #pages-panel.pb-collapsed #pages-header { justify-content: center; padding: 10px 0; }
-#pages-panel.pb-collapsed #btn-collapse-sidebar { transform: scaleX(-1); }
+#pages-panel.pb-collapsed #btn-collapse-sidebar { margin: 0 auto; }
 
 #pages-header {
   display: flex; align-items: center; gap: 6px;
@@ -57,11 +57,15 @@ html, body {
 #pages-header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
 #btn-collapse-sidebar {
-  background: none; border: none; color: #6b7280; cursor: pointer;
-  padding: 2px 4px; font-size: 14px; font-weight: 700; border-radius: 4px;
-  line-height: 1; flex-shrink: 0; transition: color .15s, background .15s;
+  position: relative;
+  background: rgba(255,255,255,.06); border: 1px solid #374151; color: #9ca3af;
+  cursor: pointer; padding: 4px 5px; border-radius: 5px;
+  line-height: 0; flex-shrink: 0; transition: color .15s, background .15s, border-color .15s;
+  display: flex; align-items: center; justify-content: center;
 }
-#btn-collapse-sidebar:hover { color: #d1d5db; background: rgba(255,255,255,.08); }
+#btn-collapse-sidebar:hover {
+  color: #f1f5f9; background: rgba(255,255,255,.14); border-color: #4b5563;
+}
 
 #btn-add-folder {
   background: none; color: #9ca3af; border: 1px solid #374151; border-radius: 5px;

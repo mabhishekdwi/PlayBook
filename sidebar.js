@@ -389,14 +389,18 @@ function startFolderRename(id, nameEl) {
 }
 
 // ─── Sidebar Collapse / Expand ────────────────────────────────────────────────
+const ICON_COLLAPSE = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
+const ICON_EXPAND   = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+
 function toggleSidebar() {
   const panel  = document.getElementById('pages-panel');
   const handle = document.getElementById('sidebar-resize-handle');
   const btn    = document.getElementById('btn-collapse-sidebar');
   const collapsed = panel.classList.toggle('pb-collapsed');
   if (handle) handle.style.pointerEvents = collapsed ? 'none' : '';
-  btn.innerHTML = collapsed ? '&#x203a;' : '&#x2039;';
-  btn.title     = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  btn.innerHTML  = collapsed ? ICON_EXPAND : ICON_COLLAPSE;
+  btn.title      = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  btn.setAttribute('aria-label', btn.title);
 }
 
 // ─── Sidebar Resize ───────────────────────────────────────────────────────────

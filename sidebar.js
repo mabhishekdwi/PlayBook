@@ -15,6 +15,12 @@ let sidebarResizeX0   = 0;
 let sidebarResizeW0   = 0;
 let downloadsExpanded = true;
 
+// ─── Drive sync state ─────────────────────────────────────────────────────────
+let driveConnected    = false;
+let driveTimer        = null;
+let localLastModified = null;
+let driveChoice       = null;   // null = not asked yet | 'drive' | 'local'
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   editor = document.getElementById('editor');
@@ -276,36 +282,50 @@ function ctxOk() {
   catch (_) { return false; }
 }
 
+function applyData(data) {
+  pages        = (data.pb_pages    || []).map((p) => ({ folderId: null, ...p }));
+  folders      =  data.pb_folders  || [];
+  downloads    =  data.pb_downloads || [];
+  activePageId =  data.pb_active   || null;
+  renderDownloads();
+  if (pages.length === 0) {
+    createPage('Getting Started', buildWelcomeContent(), false);
+  } else {
+    renderPagesList();
+    const target = pages.find((p) => p.id === activePageId) || pages[0];
+    activatePage(target.id);
+  }
+}
+
 function loadFromStorage() {
   if (!ctxOk()) return;
   try {
-    chrome.storage.local.get(['pb_pages','pb_active','pb_folders','pb_downloads'], (result) => {
-      try {
-        if (chrome.runtime.lastError) return;
-      } catch (_) { return; }
-      pages        = (result.pb_pages   || []).map((p) => ({ folderId: null, ...p }));
-      folders      = result.pb_folders  || [];
-      downloads    = result.pb_downloads || [];
-      activePageId = result.pb_active   || null;
-
-      renderDownloads();
-
-      if (pages.length === 0) {
-        createPage('Getting Started', buildWelcomeContent(), false);
-      } else {
-        renderPagesList();
-        const target = pages.find((p) => p.id === activePageId) || pages[0];
-        activatePage(target.id);
+    chrome.storage.local.get(
+      ['pb_pages', 'pb_active', 'pb_folders', 'pb_downloads', '_lastModified', 'pb_drive_choice'],
+      (result) => {
+        try { if (chrome.runtime.lastError) return; } catch (_) { return; }
+        localLastModified = result._lastModified || null;
+        driveChoice       = result.pb_drive_choice || null;
+        applyData(result);
+        // Only attempt Drive sync if user already opted in
+        if (driveChoice === 'drive') tryDriveSync(false);
       }
-    });
+    );
   } catch (_) {}
 }
 
 function persist() {
   if (!ctxOk()) return;
+  const now = new Date().toISOString();
+  localLastModified = now;
   try {
-    chrome.storage.local.set({ pb_pages: pages, pb_active: activePageId, pb_folders: folders, pb_downloads: downloads });
+    chrome.storage.local.set({
+      pb_pages: pages, pb_active: activePageId,
+      pb_folders: folders, pb_downloads: downloads,
+      _lastModified: now,
+    });
   } catch (_) {}
+  scheduleDriveSync();
 }
 
 function scheduleSave() {
@@ -443,6 +463,101 @@ function toggleSidebar() {
   btn.innerHTML  = collapsed ? ICON_EXPAND : ICON_COLLAPSE;
   btn.title      = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
   btn.setAttribute('aria-label', btn.title);
+}
+
+// ─── Drive Sync ───────────────────────────────────────────────────────────────
+function setSyncStatus(state) {
+  const btn = document.getElementById('btn-drive-sync');
+  const lbl = document.getElementById('sync-label');
+  if (!btn || !lbl) return;
+  btn.dataset.syncState = state;
+  if (state === 'syncing')      lbl.textContent = 'Syncing…';
+  else if (state === 'synced')  { lbl.textContent = 'Synced ✓'; setTimeout(() => setSyncStatus('idle'), 3000); }
+  else if (state === 'error')   lbl.textContent = 'Sync failed';
+  else if (state === 'disconnected') lbl.textContent = 'Connect Drive';
+  else                          lbl.textContent = 'Drive';
+}
+
+function scheduleDriveSync() {
+  if (!driveConnected || driveChoice !== 'drive') return;
+  clearTimeout(driveTimer);
+  driveTimer = setTimeout(pushToDrive, 5000);
+}
+
+// ─── Drive Permission Modal ───────────────────────────────────────────────────
+function showDrivePermModal(onYes, onNo) {
+  const modal = document.getElementById('drive-perm-modal');
+  modal.removeAttribute('hidden');
+  document.getElementById('drive-perm-yes').onclick = () => {
+    modal.setAttribute('hidden', '');
+    onYes();
+  };
+  document.getElementById('drive-perm-no').onclick = () => {
+    modal.setAttribute('hidden', '');
+    onNo();
+  };
+}
+
+function saveDriveChoice(choice) {
+  driveChoice = choice;
+  if (ctxOk()) {
+    try { chrome.storage.local.set({ pb_drive_choice: choice }); } catch (_) {}
+  }
+}
+
+async function pushToDrive() {
+  if (!driveConnected) return;
+  setSyncStatus('syncing');
+  try {
+    await DriveSync.save({
+      lastModified: localLastModified || new Date().toISOString(),
+      pb_pages: pages, pb_folders: folders,
+      pb_active: activePageId, pb_downloads: downloads,
+    });
+    setSyncStatus('synced');
+  } catch (_) {
+    setSyncStatus('error');
+  }
+}
+
+async function tryDriveSync(interactive) {
+  setSyncStatus('syncing');
+  try {
+    await DriveSync.getToken(interactive);
+    const driveData = await DriveSync.load(false);
+    if (driveData) {
+      const driveMod = driveData.lastModified;
+      const localMod = localLastModified;
+      if (!localMod || (driveMod && new Date(driveMod) > new Date(localMod))) {
+        // Drive has newer data — apply it (only if user isn't mid-edit)
+        if (!isDirty) {
+          localLastModified = driveMod;
+          if (ctxOk()) {
+            try {
+              chrome.storage.local.set({
+                pb_pages: driveData.pb_pages, pb_active: driveData.pb_active,
+                pb_folders: driveData.pb_folders, pb_downloads: driveData.pb_downloads,
+                _lastModified: driveMod,
+              });
+            } catch (_) {}
+          }
+          applyData(driveData);
+          showToast('Synced from Drive ✓');
+        }
+      } else {
+        // Local is newer — push up to Drive
+        await pushToDrive();
+      }
+    } else {
+      // No Drive file yet — create one from local data
+      await pushToDrive();
+    }
+    driveConnected = true;
+    setSyncStatus('idle');
+  } catch (_) {
+    driveConnected = false;
+    setSyncStatus('disconnected');
+  }
 }
 
 // ─── Downloads Section ────────────────────────────────────────────────────────
@@ -816,7 +931,24 @@ function syncListDate(id, iso) {
 
 // ─── Global Events ────────────────────────────────────────────────────────────
 function bindGlobalEvents() {
-  document.getElementById('btn-add-page').addEventListener('click', () => createPage());
+  document.getElementById('btn-drive-sync').addEventListener('click', () => tryDriveSync(true));
+  document.getElementById('btn-add-page').addEventListener('click', () => {
+    if (driveChoice === null) {
+      // First time — ask before creating the page
+      showDrivePermModal(
+        () => { // Yes — save to Drive
+          saveDriveChoice('drive');
+          tryDriveSync(true).finally(() => createPage());
+        },
+        () => { // No — keep local
+          saveDriveChoice('local');
+          createPage();
+        }
+      );
+    } else {
+      createPage();
+    }
+  });
   document.getElementById('btn-add-folder').addEventListener('click', () => createFolder());
   document.getElementById('btn-collapse-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btn-delete-page').addEventListener('click', () => {

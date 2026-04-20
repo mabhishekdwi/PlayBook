@@ -741,6 +741,18 @@ html, body {
   z-index: 99999; white-space: nowrap; box-shadow: 0 4px 20px rgba(0,0,0,.28);
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.error {
+  background: #1f1010; border: 1px solid rgba(248,113,113,.35);
+  pointer-events: auto; white-space: normal; max-width: 340px;
+  display: flex; align-items: flex-start; gap: 10px; cursor: default;
+}
+.toast.error .toast-msg { flex: 1; user-select: text; word-break: break-all; }
+.toast.error .toast-copy {
+  flex-shrink: 0; background: rgba(248,113,113,.15); border: 1px solid rgba(248,113,113,.3);
+  color: #fca5a5; border-radius: 5px; font-size: 11px; font-weight: 600;
+  padding: 2px 7px; cursor: pointer; transition: background .15s;
+}
+.toast.error .toast-copy:hover { background: rgba(248,113,113,.3); }
 
 /* ─── Scrollbars (global) ──────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

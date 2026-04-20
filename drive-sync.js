@@ -2,25 +2,26 @@
 'use strict';
 
 const DriveSync = (() => {
-  const FILE_NAME   = 'playbook_data.json';
+  const DOC_NAME    = 'Playbook';
+  const SYNC_NAME   = 'playbook_sync.json';
   const FOLDER_NAME = 'Playbook';
   const API         = 'https://www.googleapis.com/drive/v3';
   const UPLOAD      = 'https://www.googleapis.com/upload/drive/v3';
+  const MIME_GDOC   = 'application/vnd.google-apps.document';
 
-  let _token    = null;
-  let _fileId   = null;
-  let _folderId = null;
+  let _token      = null;
+  let _docId      = null;  // Google Doc (for viewing)
+  let _syncId     = null;  // JSON file (for sync/restore)
+  let _folderId   = null;
 
-  // ── Token ──────────────────────────────────────────────────────────────────
+  // ── Token (relayed via background service worker) ─────────────────────────
   function getToken(interactive = false) {
     return new Promise((resolve, reject) => {
-      chrome.identity.getAuthToken({ interactive }, (token) => {
-        if (chrome.runtime.lastError || !token) {
-          reject(new Error(chrome.runtime.lastError?.message || 'auth_failed'));
-        } else {
-          _token = token;
-          resolve(token);
-        }
+      chrome.runtime.sendMessage({ type: 'GET_AUTH_TOKEN', interactive }, (resp) => {
+        if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
+        if (resp?.error)              { reject(new Error(resp.error)); return; }
+        _token = resp.token;
+        resolve(resp.token);
       });
     });
   }
@@ -28,14 +29,13 @@ const DriveSync = (() => {
   function clearToken() {
     return new Promise((resolve) => {
       if (!_token) { resolve(); return; }
-      chrome.identity.removeCachedAuthToken({ token: _token }, () => {
-        _token = null;
-        resolve();
-      });
+      const t = _token;
+      _token = null;
+      chrome.runtime.sendMessage({ type: 'CLEAR_AUTH_TOKEN', token: t }, () => resolve());
     });
   }
 
-  // ── Fetch with auto-retry on 401 ───────────────────────────────────────────
+  // ── Fetch with auto-retry on 401 ──────────────────────────────────────────
   async function apiFetch(url, opts = {}, retried = false) {
     const t = _token || await getToken(false);
     const res = await fetch(url, {
@@ -50,7 +50,7 @@ const DriveSync = (() => {
     return res;
   }
 
-  // ── Find or create "Playbook" folder in Drive ──────────────────────────────
+  // ── Find or create "Playbook" folder ──────────────────────────────────────
   async function findOrCreateFolder() {
     if (_folderId) return _folderId;
     const q = encodeURIComponent(
@@ -61,7 +61,6 @@ const DriveSync = (() => {
       const data = await res.json();
       if (data.files?.length > 0) { _folderId = data.files[0].id; return _folderId; }
     }
-    // Create the folder
     const create = await apiFetch(`${API}/files`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -72,42 +71,91 @@ const DriveSync = (() => {
     return _folderId;
   }
 
-  // ── Find playbook_data.json inside the Playbook folder ────────────────────
-  async function findFileId() {
-    if (_fileId) return _fileId;
+  // ── Find a file by name inside the Playbook folder ────────────────────────
+  async function findFile(name) {
     const folderId = await findOrCreateFolder();
     const q = encodeURIComponent(
-      `name='${FILE_NAME}' and '${folderId}' in parents and trashed=false`
+      `name='${name}' and '${folderId}' in parents and trashed=false`
     );
     const res = await apiFetch(`${API}/files?q=${q}&fields=files(id)&spaces=drive`);
     if (!res.ok) return null;
     const data = await res.json();
-    _fileId = data.files?.[0]?.id ?? null;
-    return _fileId;
+    return data.files?.[0]?.id ?? null;
   }
 
-  // ── Load data from Drive ───────────────────────────────────────────────────
-  async function load(interactive = false) {
-    await getToken(interactive);
-    const id = await findFileId();
-    if (!id) return null;
-    const res = await apiFetch(`${API}/files/${id}?alt=media`);
-    if (!res.ok) return null;
-    return res.json();
+  // ── Build human-readable HTML (used to create/update the Google Doc) ──────
+  function buildDocHtml(data) {
+    const pages   = data.pb_pages   || [];
+    const folders = data.pb_folders || [];
+    const updated = data.lastModified
+      ? new Date(data.lastModified).toLocaleString()
+      : new Date().toLocaleString();
+
+    const folderMap = Object.fromEntries(folders.map(f => [f.id, f.title]));
+
+    const pagesHtml = pages.map(p => {
+      const folder = p.folderId ? folderMap[p.folderId] : null;
+      return `
+      <hr>
+      <h2>${esc(p.title || 'Untitled')}</h2>
+      ${folder ? `<p><em>Folder: ${esc(folder)}</em></p>` : ''}
+      <p><small>Last updated: ${p.updatedAt ? new Date(p.updatedAt).toLocaleString() : '—'}</small></p>
+      ${p.content || ''}`;
+    }).join('\n');
+
+    return `<h1>Playbook</h1>
+<p><em>Last synced: ${updated} &nbsp;·&nbsp; ${pages.length} page${pages.length !== 1 ? 's' : ''}</em></p>
+${pagesHtml}`;
   }
 
-  // ── Save data to Drive ─────────────────────────────────────────────────────
+  function esc(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Save both the Google Doc and the sync JSON ────────────────────────────
   async function save(data) {
-    const t    = _token || await getToken(false);
-    const body = JSON.stringify(data);
-    let id = await findFileId();
+    const t = _token || await getToken(false);
+    await Promise.all([saveDoc(t, data), saveSyncFile(t, data)]);
+  }
 
-    if (!id) {
-      // Create new file inside the Playbook folder
+  async function saveDoc(t, data) {
+    const html = buildDocHtml(data);
+    _docId = _docId || await findFile(DOC_NAME);
+
+    if (!_docId) {
       const folderId = await findOrCreateFolder();
       const form = new FormData();
       form.append('metadata', new Blob(
-        [JSON.stringify({ name: FILE_NAME, mimeType: 'application/json', parents: [folderId] })],
+        [JSON.stringify({ name: DOC_NAME, mimeType: MIME_GDOC, parents: [folderId] })],
+        { type: 'application/json' }
+      ));
+      form.append('file', new Blob([html], { type: 'text/html' }));
+      const res = await fetch(`${UPLOAD}/files?uploadType=multipart&fields=id`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${t}` },
+        body: form,
+      });
+      if (!res.ok) throw new Error(`Doc create failed ${res.status}`);
+      _docId = (await res.json()).id;
+    } else {
+      const res = await fetch(`${UPLOAD}/files/${_docId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'text/html' },
+        body: html,
+      });
+      if (!res.ok) throw new Error(`Doc update failed ${res.status}`);
+    }
+  }
+
+  async function saveSyncFile(t, data) {
+    const body = JSON.stringify(data);
+    _syncId = _syncId || await findFile(SYNC_NAME);
+
+    if (!_syncId) {
+      const folderId = await findOrCreateFolder();
+      const form = new FormData();
+      form.append('metadata', new Blob(
+        [JSON.stringify({ name: SYNC_NAME, mimeType: 'application/json', parents: [folderId] })],
         { type: 'application/json' }
       ));
       form.append('file', new Blob([body], { type: 'application/json' }));
@@ -116,17 +164,26 @@ const DriveSync = (() => {
         headers: { Authorization: `Bearer ${t}` },
         body: form,
       });
-      if (!res.ok) throw new Error(`Create failed ${res.status}`);
-      _fileId = (await res.json()).id;
+      if (!res.ok) throw new Error(`Sync file create failed ${res.status}`);
+      _syncId = (await res.json()).id;
     } else {
-      // Update existing file
-      const res = await fetch(`${UPLOAD}/files/${id}?uploadType=media`, {
+      const res = await fetch(`${UPLOAD}/files/${_syncId}?uploadType=media`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
         body,
       });
-      if (!res.ok) throw new Error(`Update failed ${res.status}`);
+      if (!res.ok) throw new Error(`Sync file update failed ${res.status}`);
     }
+  }
+
+  // ── Load sync data from the JSON file ────────────────────────────────────
+  async function load(interactive = false) {
+    await getToken(interactive);
+    _syncId = _syncId || await findFile(SYNC_NAME);
+    if (!_syncId) return null;
+    const res = await apiFetch(`${API}/files/${_syncId}?alt=media`);
+    if (!res.ok) return null;
+    return res.json();
   }
 
   function getFolderUrl() {

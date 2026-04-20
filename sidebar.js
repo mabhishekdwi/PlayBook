@@ -549,6 +549,9 @@ async function tryDriveSync(interactive) {
   setSyncStatus('syncing');
   try {
     await DriveSync.getToken(interactive);
+    // Mark connected early so pushToDrive() works when called below
+    driveConnected = true;
+
     const driveData = await DriveSync.load(false);
     if (driveData) {
       const driveMod = driveData.lastModified;
@@ -574,10 +577,10 @@ async function tryDriveSync(interactive) {
         await pushToDrive();
       }
     } else {
-      // No Drive file yet — create one from local data
+      // No Drive file yet — upload local data
       await pushToDrive();
     }
-    driveConnected = true;
+
     saveDriveChoice('drive');
     setSyncStatus('idle');
     const folderUrl = DriveSync.getFolderUrl();
@@ -585,9 +588,13 @@ async function tryDriveSync(interactive) {
     if (folderUrl && ctxOk()) {
       try { chrome.storage.local.set({ pb_drive_folder_url: folderUrl }); } catch (_) {}
     }
-  } catch (_) {
+  } catch (err) {
     driveConnected = false;
     setSyncStatus('disconnected');
+    const msg = err?.message || '';
+    if (msg && !msg.includes('canceled') && !msg.includes('not signed')) {
+      showToast('Drive error: ' + msg, true);
+    }
   }
 }
 
@@ -1310,12 +1317,27 @@ function esc(s) {
 }
 function stripHtml(html) { const d = document.createElement('div'); d.innerHTML = html||''; return d.innerText; }
 
-function showToast(msg) {
+function showToast(msg, isError = false) {
   const t = document.getElementById('__toast__');
-  t.textContent = msg;
-  t.classList.add('show');
   clearTimeout(t._tm);
-  t._tm = setTimeout(() => t.classList.remove('show'), 2800);
+  t.classList.toggle('error', isError);
+  if (isError) {
+    t.innerHTML = '';
+    const span = document.createElement('span');
+    span.className = 'toast-msg';
+    span.textContent = msg;
+    const btn = document.createElement('button');
+    btn.className = 'toast-copy';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(msg).then(() => { btn.textContent = 'Copied!'; });
+    });
+    t.append(span, btn);
+  } else {
+    t.textContent = msg;
+  }
+  t.classList.add('show');
+  t._tm = setTimeout(() => t.classList.remove('show', 'error'), isError ? 8000 : 2800);
 }
 
 // ─── Welcome Content ──────────────────────────────────────────────────────────

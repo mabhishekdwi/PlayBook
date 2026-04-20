@@ -2,7 +2,6 @@
   "manifest_version": 3,
   "name": "Playbook",
   "version": "1.2",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu/eFUOuq0nwVbf4Slqug8wOcWrcmo6TvcWuPoJTOaOicyccJPXoLbCECCFxYeP9ogOSbDiD7ZjC8iPATEcIbgW4IiHLka5DWifDjGGwzIObfBWuSC+rF0+728gAVn8hJ/zbB3Cv9pb0/uwpRfFXxrDEK4ib6s6fSvY1+UOm0zarmYc01uZPHFZrnFsPgnBuJvxtc1kh+IAjWtKXdlJRa/cOacdLppfZhZFc87ag3eZsEon0Lzsfcb984BIAi54ibjq6DI1lRS0Xx2s7MUL9K8bONcK0V6i6GDooulXAWkVrt4lZS/IH1xnI6GQhXjSUFyUARwWkq9C/1WNjVaJselQIDAQAB",
   "description": "Floating sidebar to build, organize, and export interview prep notes with full rich-text formatting.",
   "permissions": ["storage", "activeTab", "scripting", "identity"],
   "oauth2": {

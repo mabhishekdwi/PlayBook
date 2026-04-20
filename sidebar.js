@@ -301,14 +301,14 @@ function loadFromStorage() {
   if (!ctxOk()) return;
   try {
     chrome.storage.local.get(
-      ['pb_pages', 'pb_active', 'pb_folders', 'pb_downloads', '_lastModified', 'pb_drive_choice', 'pb_drive_folder_url'],
+      ['pb_pages', 'pb_active', 'pb_folders', 'pb_downloads', '_lastModified', 'pb_drive_choice', 'pb_drive_folder_url', 'pb_page_doc_map'],
       (result) => {
         try { if (chrome.runtime.lastError) return; } catch (_) { return; }
         localLastModified = result._lastModified || null;
         driveChoice       = result.pb_drive_choice || null;
+        if (result.pb_page_doc_map) DriveSync.setPageDocMap(result.pb_page_doc_map);
         if (result.pb_drive_folder_url) setViewDriveLink(result.pb_drive_folder_url);
         applyData(result);
-        // Only attempt Drive sync if user already opted in
         if (driveChoice === 'drive') tryDriveSync(false);
       }
     );
@@ -386,6 +386,7 @@ function deletePage(id) {
   if (pages.length <= 1) { showToast('At least one page must remain'); return; }
   const idx = pages.findIndex((p) => p.id === id);
   if (idx === -1) return;
+  if (driveConnected) DriveSync.deleteDriveDoc(id);
   pages.splice(idx, 1);
   if (activePageId === id) activatePage(pages[Math.min(idx, pages.length - 1)].id);
   renderPagesList();
@@ -538,10 +539,31 @@ async function pushToDrive() {
       lastModified: localLastModified || new Date().toISOString(),
       pb_pages: pages, pb_folders: folders,
       pb_active: activePageId, pb_downloads: downloads,
-    });
+    }, activePageId);
     setSyncStatus('synced');
-  } catch (_) {
+    updateViewDriveLink();
+  } catch (err) {
     setSyncStatus('error');
+    const msg = err?.message || '';
+    if (msg) showToast('Drive error: ' + msg, true);
+  }
+}
+
+function updateViewDriveLink() {
+  const url = DriveSync.getPageDocUrl(activePageId) || DriveSync.getFolderUrl();
+  if (url) {
+    setViewDriveLink(url);
+    if (ctxOk()) {
+      try { chrome.storage.local.set({ pb_drive_folder_url: url }); } catch (_) {}
+    }
+  }
+  if (ctxOk()) {
+    try { chrome.storage.local.set({ pb_page_doc_map: DriveSync.getPageDocMap() }); } catch (_) {}
+  }
+  const folderUrl = DriveSync.getFolderUrl();
+  const btn = document.getElementById('btn-drive-sync');
+  if (btn && folderUrl) {
+    btn.title = 'Synced to: Google Drive / Playbook\n' + folderUrl;
   }
 }
 
@@ -583,11 +605,7 @@ async function tryDriveSync(interactive) {
 
     saveDriveChoice('drive');
     setSyncStatus('idle');
-    const folderUrl = DriveSync.getFolderUrl();
-    setViewDriveLink(folderUrl);
-    if (folderUrl && ctxOk()) {
-      try { chrome.storage.local.set({ pb_drive_folder_url: folderUrl }); } catch (_) {}
-    }
+    updateViewDriveLink();
   } catch (err) {
     driveConnected = false;
     setSyncStatus('disconnected');
@@ -739,6 +757,7 @@ function activatePage(id) {
   setContent(page.content);
   highlightActive();
   persist();
+  if (driveConnected) updateViewDriveLink();
 }
 
 // ─── Render Pages List ────────────────────────────────────────────────────────
@@ -1344,14 +1363,42 @@ function showToast(msg, isError = false) {
 function buildWelcomeContent() {
   return `<h1>Welcome to Playbook 🎯</h1>
 <p>Your personal workspace for organising interview prep. <strong>Paste ChatGPT responses directly</strong> — all formatting is preserved: headings, code blocks, lists, tables, and callouts.</p>
+
 <h2>Quick Start</h2>
 <ul>
   <li>Click <strong>+ New</strong> in the left panel to add a page</li>
+  <li>Click <strong>📁</strong> to create a folder and organise pages inside it</li>
   <li>Paste any ChatGPT answer — formatting stays intact</li>
   <li>Drag the <strong>⠿</strong> handle to reorder pages</li>
-  <li>Press <strong>Ctrl/Cmd + S</strong> to save manually</li>
-  <li>Click <strong>PDF</strong> to export the entire playbook</li>
+  <li>Click <strong>PDF</strong> to export pages as a PDF</li>
+  <li>Click <strong>Copy</strong> to copy all pages to clipboard</li>
 </ul>
+
+<h2>☁️ Google Drive Sync</h2>
+<p>Playbook can automatically back up all your pages to your personal Google Drive. Here's how it works:</p>
+<ol>
+  <li>Click the <strong>Connect Drive</strong> button in the top-right header</li>
+  <li>Click <strong>Yes, Connect</strong> in the prompt and sign in with your Google account</li>
+  <li>A folder called <strong>Playbook</strong> is created at the root of your Google Drive:<br/>
+      <code>My Drive / Playbook /</code></li>
+  <li>Each page you create becomes its own <strong>Google Doc</strong> inside that folder</li>
+  <li>Every edit auto-saves to Drive within a few seconds</li>
+  <li>Click the <strong>View</strong> button (next to Connect Drive) to open the current page's Google Doc directly</li>
+  <li>Hover over the <strong>Drive</strong> button to see the full folder path</li>
+</ol>
+<blockquote>💡 <strong>Tip:</strong> From Google Drive you can open any page doc, download it as PDF or Word, or share it — all your data stays private in your own Drive.</blockquote>
+
+<h2>Drive Sync Status</h2>
+<table>
+  <thead><tr><th>Button colour</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Gray — <em>Connect Drive</em></td><td>Not connected yet</td></tr>
+    <tr><td>Blue — <em>Syncing…</em></td><td>Uploading changes to Drive</td></tr>
+    <tr><td>Green — <em>Drive</em></td><td>Connected and up to date</td></tr>
+    <tr><td>Red — <em>Sync failed</em></td><td>Error — hover to see details</td></tr>
+  </tbody>
+</table>
+
 <h2>Code Block Demo</h2>
 <pre class="code-block">// Two Sum — O(n) Hash Map
 function twoSum(nums, target) {
@@ -1362,8 +1409,10 @@ function twoSum(nums, target) {
     map.set(nums[i], i);
   }
 }</pre>
+
 <h2>Callout Demo</h2>
 <blockquote>💡 <strong>Tip:</strong> Always clarify constraints before coding. Ask about edge cases, input size, and expected output type.</blockquote>
+
 <h2>Table Demo</h2>
 <table>
   <thead><tr><th>Topic</th><th>Status</th><th>Notes</th></tr></thead>

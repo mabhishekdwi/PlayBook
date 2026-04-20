@@ -2,7 +2,6 @@
 'use strict';
 
 const DriveSync = (() => {
-  const DOC_NAME    = 'Playbook';
   const SYNC_NAME   = 'playbook_sync.json';
   const FOLDER_NAME = 'Playbook';
   const API         = 'https://www.googleapis.com/drive/v3';
@@ -10,9 +9,9 @@ const DriveSync = (() => {
   const MIME_GDOC   = 'application/vnd.google-apps.document';
 
   let _token      = null;
-  let _docId      = null;  // Google Doc (for viewing)
-  let _syncId     = null;  // JSON file (for sync/restore)
-  let _folderId   = null;
+  let _syncId     = null;   // playbook_sync.json file ID
+  let _folderId   = null;   // Playbook folder ID
+  let _pageDocMap = {};     // { [pageId]: driveDocId }
 
   // ── Token (relayed via background service worker) ─────────────────────────
   function getToken(interactive = false) {
@@ -83,50 +82,28 @@ const DriveSync = (() => {
     return data.files?.[0]?.id ?? null;
   }
 
-  // ── Build human-readable HTML (used to create/update the Google Doc) ──────
-  function buildDocHtml(data) {
-    const pages   = data.pb_pages   || [];
-    const folders = data.pb_folders || [];
-    const updated = data.lastModified
-      ? new Date(data.lastModified).toLocaleString()
-      : new Date().toLocaleString();
-
-    const folderMap = Object.fromEntries(folders.map(f => [f.id, f.title]));
-
-    const pagesHtml = pages.map(p => {
-      const folder = p.folderId ? folderMap[p.folderId] : null;
-      return `
-      <hr>
-      <h2>${esc(p.title || 'Untitled')}</h2>
-      ${folder ? `<p><em>Folder: ${esc(folder)}</em></p>` : ''}
-      <p><small>Last updated: ${p.updatedAt ? new Date(p.updatedAt).toLocaleString() : '—'}</small></p>
-      ${p.content || ''}`;
-    }).join('\n');
-
-    return `<h1>Playbook</h1>
-<p><em>Last synced: ${updated} &nbsp;·&nbsp; ${pages.length} page${pages.length !== 1 ? 's' : ''}</em></p>
-${pagesHtml}`;
+  // ── Build HTML for a single page ──────────────────────────────────────────
+  function buildPageHtml(page, folderTitle) {
+    return `<h1>${esc(page.title || 'Untitled')}</h1>
+${folderTitle ? `<p><em>Folder: ${esc(folderTitle)}</em></p>` : ''}
+<p><small>Last updated: ${page.updatedAt ? new Date(page.updatedAt).toLocaleString() : '—'}</small></p>
+${page.content || ''}`;
   }
 
   function esc(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // ── Save both the Google Doc and the sync JSON ────────────────────────────
-  async function save(data) {
-    const t = _token || await getToken(false);
-    await Promise.all([saveDoc(t, data), saveSyncFile(t, data)]);
-  }
+  // ── Create or update a single page's Google Doc ───────────────────────────
+  async function savePageDoc(t, folderId, page, folderTitle) {
+    const html    = buildPageHtml(page, folderTitle);
+    const docName = page.title || 'Untitled';
+    const docId   = _pageDocMap[page.id];
 
-  async function saveDoc(t, data) {
-    const html = buildDocHtml(data);
-    _docId = _docId || await findFile(DOC_NAME);
-
-    if (!_docId) {
-      const folderId = await findOrCreateFolder();
+    if (!docId) {
       const form = new FormData();
       form.append('metadata', new Blob(
-        [JSON.stringify({ name: DOC_NAME, mimeType: MIME_GDOC, parents: [folderId] })],
+        [JSON.stringify({ name: docName, mimeType: MIME_GDOC, parents: [folderId] })],
         { type: 'application/json' }
       ));
       form.append('file', new Blob([html], { type: 'text/html' }));
@@ -136,23 +113,30 @@ ${pagesHtml}`;
         body: form,
       });
       if (!res.ok) throw new Error(`Doc create failed ${res.status}`);
-      _docId = (await res.json()).id;
+      _pageDocMap[page.id] = (await res.json()).id;
     } else {
-      const res = await fetch(`${UPLOAD}/files/${_docId}?uploadType=media`, {
+      // Update content
+      await fetch(`${UPLOAD}/files/${docId}?uploadType=media`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'text/html' },
         body: html,
       });
-      if (!res.ok) throw new Error(`Doc update failed ${res.status}`);
+      // Rename if title changed
+      await apiFetch(`${API}/files/${docId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: docName }),
+      });
     }
+    return _pageDocMap[page.id];
   }
 
-  async function saveSyncFile(t, data) {
-    const body = JSON.stringify(data);
+  // ── Save sync JSON ────────────────────────────────────────────────────────
+  async function saveSyncFile(t, folderId, data) {
+    const body = JSON.stringify({ ...data, pb_page_doc_map: _pageDocMap });
     _syncId = _syncId || await findFile(SYNC_NAME);
 
     if (!_syncId) {
-      const folderId = await findOrCreateFolder();
       const form = new FormData();
       form.append('metadata', new Blob(
         [JSON.stringify({ name: SYNC_NAME, mimeType: 'application/json', parents: [folderId] })],
@@ -167,28 +151,68 @@ ${pagesHtml}`;
       if (!res.ok) throw new Error(`Sync file create failed ${res.status}`);
       _syncId = (await res.json()).id;
     } else {
-      const res = await fetch(`${UPLOAD}/files/${_syncId}?uploadType=media`, {
+      await fetch(`${UPLOAD}/files/${_syncId}?uploadType=media`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
         body,
       });
-      if (!res.ok) throw new Error(`Sync file update failed ${res.status}`);
     }
   }
 
-  // ── Load sync data from the JSON file ────────────────────────────────────
+  // ── Public: save one changed page + sync JSON ─────────────────────────────
+  async function save(data, changedPageId = null) {
+    const t         = _token || await getToken(false);
+    const folderId  = await findOrCreateFolder();
+    const folderMap = Object.fromEntries((data.pb_folders || []).map(f => [f.id, f.title]));
+    const pages     = data.pb_pages || [];
+
+    if (changedPageId) {
+      const page = pages.find(p => p.id === changedPageId);
+      if (page) await savePageDoc(t, folderId, page, folderMap[page.folderId] || null);
+    } else {
+      // Initial sync — create docs for all pages
+      for (const page of pages) {
+        await savePageDoc(t, folderId, page, folderMap[page.folderId] || null);
+      }
+    }
+
+    await saveSyncFile(t, folderId, data);
+  }
+
+  // ── Public: delete a page's Google Doc from Drive ─────────────────────────
+  async function deleteDriveDoc(pageId) {
+    const docId = _pageDocMap[pageId];
+    if (!docId) return;
+    await apiFetch(`${API}/files/${docId}`, { method: 'DELETE' });
+    delete _pageDocMap[pageId];
+  }
+
+  // ── Load sync data ────────────────────────────────────────────────────────
   async function load(interactive = false) {
     await getToken(interactive);
     _syncId = _syncId || await findFile(SYNC_NAME);
     if (!_syncId) return null;
     const res = await apiFetch(`${API}/files/${_syncId}?alt=media`);
     if (!res.ok) return null;
-    return res.json();
+    const data = await res.json();
+    if (data.pb_page_doc_map) _pageDocMap = data.pb_page_doc_map;
+    return data;
+  }
+
+  function getPageDocUrl(pageId) {
+    const docId = _pageDocMap[pageId];
+    return docId ? `https://docs.google.com/document/d/${docId}/edit` : null;
   }
 
   function getFolderUrl() {
     return _folderId ? `https://drive.google.com/drive/folders/${_folderId}` : null;
   }
 
-  return { load, save, getToken, clearToken, getFolderUrl };
+  function setPageDocMap(map) {
+    if (map && typeof map === 'object') _pageDocMap = map;
+  }
+
+  function getPageDocMap() { return _pageDocMap; }
+
+  return { load, save, deleteDriveDoc, getToken, clearToken, getFolderUrl, getPageDocUrl, setPageDocMap, getPageDocMap };
 })();

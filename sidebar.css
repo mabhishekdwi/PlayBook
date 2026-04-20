@@ -31,6 +31,41 @@ html, body {
 #header-actions button:hover { background: rgba(255,255,255,.18); color: #fff; }
 #header-actions button svg   { flex-shrink: 0; }
 
+/* Drive sync button states */
+#btn-drive-sync                                 { display: none; } /* hidden until user opts in */
+#btn-drive-sync[data-sync-state="syncing"]      { display: flex; color: #60a5fa; border-color: rgba(96,165,250,.35); }
+#btn-drive-sync[data-sync-state="synced"]       { display: flex; color: #34d399; border-color: rgba(52,211,153,.35); }
+#btn-drive-sync[data-sync-state="error"]        { display: flex; color: #f87171; border-color: rgba(248,113,113,.35); }
+#btn-drive-sync[data-sync-state="idle"]         { display: flex; color: #9ca3af; }
+
+/* ─── Drive Permission Modal ───────────────────────────────────────────────── */
+.drive-perm-card {
+  max-width: 320px; width: 100%;
+  padding: 28px 24px 22px;
+  text-align: center;
+  border-radius: 14px;
+}
+.drive-perm-icon { margin-bottom: 12px; }
+.drive-perm-title {
+  font-size: 15px; font-weight: 700; color: #111827; margin-bottom: 10px;
+}
+.drive-perm-body {
+  font-size: 12px; color: #4b5563; line-height: 1.6; margin-bottom: 20px;
+}
+.drive-perm-actions {
+  display: flex; gap: 10px; justify-content: center;
+}
+.drive-perm-actions button {
+  flex: 1; padding: 8px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  border: 1px solid #e5e7eb; display: flex; align-items: center;
+  justify-content: center; gap: 6px; transition: background .15s;
+}
+#drive-perm-no  { background: #f9fafb; color: #374151; }
+#drive-perm-no:hover  { background: #f3f4f6; }
+#drive-perm-yes { background: #2563eb; color: #fff; border-color: #2563eb; }
+#drive-perm-yes:hover { background: #1d4ed8; }
+
 /* ─── Main split ───────────────────────────────────────────────────────────── */
 #main { display: flex; flex: 1; overflow: hidden; min-height: 0; }
 

@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Playbook",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Floating sidebar to build, organize, and export interview prep notes with full rich-text formatting.",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": ["storage", "activeTab", "scripting", "identity"],
+  "oauth2": {
+    "client_id": "539583220061-4goq43dqh1lg4ro6hi377e4396de9tvg.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.file"]
+  },
   "action": {
     "default_title": "Open Playbook"
   },
@@ -16,6 +20,7 @@
         "sidebar.html",
         "sidebar.css",
         "sidebar.js",
+        "drive-sync.js",
         "lib/Sortable.min.js",
         "lib/html2pdf.bundle.min.js"
       ],

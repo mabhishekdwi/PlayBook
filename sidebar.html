@@ -16,6 +16,10 @@
         <span id="header-title">Playbook</span>
       </div>
       <div id="header-actions">
+        <button id="btn-drive-sync" data-sync-state="disconnected" title="Sync with Google Drive">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/></svg>
+          <span id="sync-label">Connect Drive</span>
+        </button>
         <button id="btn-export-pdf" title="Export all pages as PDF">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           PDF
@@ -150,8 +154,27 @@
     </div>
   </div>
 
+  <!-- ── Drive Permission Modal ───────────────────────────────────────────── -->
+  <div id="drive-perm-modal" class="modal-overlay" hidden>
+    <div class="modal drive-perm-card">
+      <div class="drive-perm-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/></svg>
+      </div>
+      <h3 class="drive-perm-title">Save to Google Drive?</h3>
+      <p class="drive-perm-body">Your pages will sync automatically across all your devices. Everything is stored in a <strong>Playbook</strong> folder in <em>your</em> Google Drive — private to you.</p>
+      <div class="drive-perm-actions">
+        <button id="drive-perm-no">Keep Local Only</button>
+        <button id="drive-perm-yes">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/></svg>
+          Save to Drive
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="lib/Sortable.min.js"></script>
   <script src="lib/html2pdf.bundle.min.js"></script>
+  <script src="drive-sync.js"></script>
   <script src="sidebar.js"></script>
 </body>
 </html>

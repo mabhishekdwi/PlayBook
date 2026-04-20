@@ -301,11 +301,12 @@ function loadFromStorage() {
   if (!ctxOk()) return;
   try {
     chrome.storage.local.get(
-      ['pb_pages', 'pb_active', 'pb_folders', 'pb_downloads', '_lastModified', 'pb_drive_choice'],
+      ['pb_pages', 'pb_active', 'pb_folders', 'pb_downloads', '_lastModified', 'pb_drive_choice', 'pb_drive_folder_url'],
       (result) => {
         try { if (chrome.runtime.lastError) return; } catch (_) { return; }
         localLastModified = result._lastModified || null;
         driveChoice       = result.pb_drive_choice || null;
+        if (result.pb_drive_folder_url) setViewDriveLink(result.pb_drive_folder_url);
         applyData(result);
         // Only attempt Drive sync if user already opted in
         if (driveChoice === 'drive') tryDriveSync(false);
@@ -471,11 +472,35 @@ function setSyncStatus(state) {
   const lbl = document.getElementById('sync-label');
   if (!btn || !lbl) return;
   btn.dataset.syncState = state;
-  if (state === 'syncing')      lbl.textContent = 'Syncing…';
-  else if (state === 'synced')  { lbl.textContent = 'Synced ✓'; setTimeout(() => setSyncStatus('idle'), 3000); }
-  else if (state === 'error')   lbl.textContent = 'Sync failed';
+  if (state === 'syncing')           lbl.textContent = 'Syncing…';
+  else if (state === 'synced')       { lbl.textContent = 'Synced ✓'; setTimeout(() => setSyncStatus('idle'), 3000); }
+  else if (state === 'error')        lbl.textContent = 'Sync failed';
   else if (state === 'disconnected') lbl.textContent = 'Connect Drive';
-  else                          lbl.textContent = 'Drive';
+  else                               lbl.textContent = 'Drive';
+}
+
+function showDeleteConfirm(message, onConfirm) {
+  const modal = document.getElementById('delete-confirm-modal');
+  document.getElementById('delete-confirm-body').textContent = message;
+  modal.removeAttribute('hidden');
+  document.getElementById('delete-confirm-ok').onclick = () => {
+    modal.setAttribute('hidden', '');
+    onConfirm();
+  };
+  document.getElementById('delete-confirm-cancel').onclick = () => {
+    modal.setAttribute('hidden', '');
+  };
+}
+
+function setViewDriveLink(url) {
+  const a = document.getElementById('btn-view-drive');
+  if (!a) return;
+  if (url) {
+    a.href = url;
+    a.removeAttribute('hidden');
+  } else {
+    a.setAttribute('hidden', '');
+  }
 }
 
 function scheduleDriveSync() {
@@ -553,7 +578,13 @@ async function tryDriveSync(interactive) {
       await pushToDrive();
     }
     driveConnected = true;
+    saveDriveChoice('drive');
     setSyncStatus('idle');
+    const folderUrl = DriveSync.getFolderUrl();
+    setViewDriveLink(folderUrl);
+    if (folderUrl && ctxOk()) {
+      try { chrome.storage.local.set({ pb_drive_folder_url: folderUrl }); } catch (_) {}
+    }
   } catch (_) {
     driveConnected = false;
     setSyncStatus('disconnected');
@@ -765,7 +796,10 @@ function createFolderEl(folder) {
   });
   header.querySelector('.folder-delete').addEventListener('click', (e) => {
     e.stopPropagation();
-    deleteFolder(folder.id);
+    showDeleteConfirm(`"${folder.title}" will be deleted. Pages inside will move to root. This will also update Google Drive.`, () => {
+      deleteFolder(folder.id);
+      pushToDrive();
+    });
   });
 
   div.appendChild(header);
@@ -931,7 +965,16 @@ function syncListDate(id, iso) {
 
 // ─── Global Events ────────────────────────────────────────────────────────────
 function bindGlobalEvents() {
-  document.getElementById('btn-drive-sync').addEventListener('click', () => tryDriveSync(true));
+  document.getElementById('btn-drive-sync').addEventListener('click', () => {
+    if (!driveConnected) {
+      showDrivePermModal(
+        () => { saveDriveChoice('drive'); tryDriveSync(true); },
+        () => { saveDriveChoice('local'); }
+      );
+    } else {
+      tryDriveSync(true);
+    }
+  });
   document.getElementById('btn-add-page').addEventListener('click', () => {
     if (driveChoice === null) {
       // First time — ask before creating the page
@@ -952,7 +995,13 @@ function bindGlobalEvents() {
   document.getElementById('btn-add-folder').addEventListener('click', () => createFolder());
   document.getElementById('btn-collapse-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btn-delete-page').addEventListener('click', () => {
-    if (activePageId) deletePage(activePageId);
+    if (!activePageId) return;
+    const page = findPage(activePageId);
+    const name = page?.title || 'this page';
+    showDeleteConfirm(`"${name}" will be permanently deleted from your device and Google Drive.`, () => {
+      deletePage(activePageId);
+      pushToDrive();
+    });
   });
   document.getElementById('page-title-input').addEventListener('input', () => {
     isDirty = true; scheduleSave();

@@ -32,11 +32,47 @@ html, body {
 #header-actions button svg   { flex-shrink: 0; }
 
 /* Drive sync button states */
-#btn-drive-sync                                 { display: none; } /* hidden until user opts in */
-#btn-drive-sync[data-sync-state="syncing"]      { display: flex; color: #60a5fa; border-color: rgba(96,165,250,.35); }
-#btn-drive-sync[data-sync-state="synced"]       { display: flex; color: #34d399; border-color: rgba(52,211,153,.35); }
-#btn-drive-sync[data-sync-state="error"]        { display: flex; color: #f87171; border-color: rgba(248,113,113,.35); }
-#btn-drive-sync[data-sync-state="idle"]         { display: flex; color: #9ca3af; }
+#btn-drive-sync                                      { display: flex; color: #9ca3af; }
+#btn-drive-sync[data-sync-state="disconnected"]      { color: #9ca3af; }
+#btn-drive-sync[data-sync-state="syncing"]           { color: #60a5fa; border-color: rgba(96,165,250,.35); }
+#btn-drive-sync[data-sync-state="synced"]            { color: #34d399; border-color: rgba(52,211,153,.35); }
+#btn-drive-sync[data-sync-state="error"]             { color: #f87171; border-color: rgba(248,113,113,.35); }
+#btn-drive-sync[data-sync-state="idle"]              { color: #34d399; border-color: rgba(52,211,153,.4); }
+
+/* View in Drive link */
+#btn-view-drive {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 11px; color: #9ca3af; text-decoration: none;
+  padding: 3px 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,.12);
+  transition: color .15s, background .15s;
+}
+#btn-view-drive:hover { color: #fff; background: rgba(255,255,255,.12); }
+
+/* ─── Delete Confirmation Modal ────────────────────────────────────────────── */
+.delete-confirm-card {
+  max-width: 300px; width: 100%;
+  padding: 24px 22px 20px;
+  text-align: center; border-radius: 14px;
+}
+.delete-confirm-icon { margin-bottom: 10px; }
+.delete-confirm-title {
+  font-size: 15px; font-weight: 700; color: #111827; margin-bottom: 8px;
+}
+.delete-confirm-body {
+  font-size: 12px; color: #4b5563; line-height: 1.5; margin-bottom: 18px;
+}
+.delete-confirm-actions {
+  display: flex; gap: 10px; justify-content: center;
+}
+.delete-confirm-actions button {
+  flex: 1; padding: 8px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  border: 1px solid #e5e7eb; transition: background .15s;
+}
+#delete-confirm-cancel { background: #f9fafb; color: #374151; }
+#delete-confirm-cancel:hover { background: #f3f4f6; }
+#delete-confirm-ok { background: #ef4444; color: #fff; border-color: #ef4444; }
+#delete-confirm-ok:hover { background: #dc2626; }
 
 /* ─── Drive Permission Modal ───────────────────────────────────────────────── */
 .drive-perm-card {

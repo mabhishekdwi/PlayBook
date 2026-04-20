@@ -129,5 +129,9 @@ const DriveSync = (() => {
     }
   }
 
-  return { load, save, getToken, clearToken };
+  function getFolderUrl() {
+    return _folderId ? `https://drive.google.com/drive/folders/${_folderId}` : null;
+  }
+
+  return { load, save, getToken, clearToken, getFolderUrl };
 })();

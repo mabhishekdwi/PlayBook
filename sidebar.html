@@ -20,6 +20,10 @@
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/></svg>
           <span id="sync-label">Connect Drive</span>
         </button>
+        <a id="btn-view-drive" href="#" target="_blank" title="View Playbook folder in Google Drive" hidden>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          View
+        </a>
         <button id="btn-export-pdf" title="Export all pages as PDF">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           PDF
@@ -154,19 +158,34 @@
     </div>
   </div>
 
+  <!-- ── Delete Confirmation Modal ──────────────────────────────────────── -->
+  <div id="delete-confirm-modal" class="modal-overlay" hidden>
+    <div class="modal delete-confirm-card">
+      <div class="delete-confirm-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      </div>
+      <h3 class="delete-confirm-title">Delete?</h3>
+      <p id="delete-confirm-body" class="delete-confirm-body"></p>
+      <div class="delete-confirm-actions">
+        <button id="delete-confirm-cancel">Cancel</button>
+        <button id="delete-confirm-ok">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Drive Permission Modal ───────────────────────────────────────────── -->
   <div id="drive-perm-modal" class="modal-overlay" hidden>
     <div class="modal drive-perm-card">
       <div class="drive-perm-icon">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/></svg>
       </div>
-      <h3 class="drive-perm-title">Save to Google Drive?</h3>
+      <h3 class="drive-perm-title">Connect to Google Drive?</h3>
       <p class="drive-perm-body">Your pages will sync automatically across all your devices. Everything is stored in a <strong>Playbook</strong> folder in <em>your</em> Google Drive — private to you.</p>
       <div class="drive-perm-actions">
-        <button id="drive-perm-no">Keep Local Only</button>
+        <button id="drive-perm-no">Keep as it is</button>
         <button id="drive-perm-yes">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/></svg>
-          Save to Drive
+          Yes, Connect
         </button>
       </div>
     </div>

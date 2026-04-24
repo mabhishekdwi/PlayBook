@@ -152,6 +152,13 @@ html, body {
 }
 #btn-add-page:hover { background: #1d4ed8; }
 
+#btn-upload-file {
+  background: none; color: #9ca3af; border: 1px solid #374151; border-radius: 5px;
+  padding: 4px 6px; font-size: 12px; cursor: pointer; transition: background .15s, color .15s;
+  line-height: 0; display: flex; align-items: center; justify-content: center;
+}
+#btn-upload-file:hover { background: rgba(255,255,255,.08); color: #f1f5f9; }
+
 /* ── Sidebar resize handle ── */
 #sidebar-resize-handle {
   width: 4px; flex-shrink: 0; cursor: col-resize;

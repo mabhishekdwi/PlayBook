@@ -214,5 +214,32 @@ ${page.content || ''}`;
 
   function getPageDocMap() { return _pageDocMap; }
 
-  return { load, save, deleteDriveDoc, getToken, clearToken, getFolderUrl, getPageDocUrl, setPageDocMap, getPageDocMap };
+  // ── Upload a raw file (PDF, DOCX, …) into the Playbook folder ────────────────
+  async function uploadRawFile(file) {
+    const t        = _token || await getToken(false);
+    const folderId = await findOrCreateFolder();
+    const form     = new FormData();
+    form.append('metadata', new Blob(
+      [JSON.stringify({ name: file.name, parents: [folderId] })],
+      { type: 'application/json' }
+    ));
+    form.append('file', file);
+    const res = await fetch(`${UPLOAD}/files?uploadType=multipart&fields=id`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${t}` },
+      body: form,
+    });
+    if (!res.ok) throw new Error(`Upload failed ${res.status}`);
+    return (await res.json()).id;
+  }
+
+  // ── Fetch a Drive file and return a local blob URL ────────────────────────────
+  async function fetchFileBlobUrl(fileId) {
+    const res = await apiFetch(`${API}/files/${fileId}?alt=media`);
+    if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  return { load, save, deleteDriveDoc, getToken, clearToken, getFolderUrl, getPageDocUrl, setPageDocMap, getPageDocMap, uploadRawFile, fetchFileBlobUrl };
 })();

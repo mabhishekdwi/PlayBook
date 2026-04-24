@@ -23,6 +23,9 @@ let driveChoice       = null;   // null = not asked yet | 'drive' | 'local'
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  if (typeof pdfjsLib !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('lib/pdf.worker.min.js');
+  }
   editor = document.getElementById('editor');
   initEditor();
   loadFromStorage();
@@ -309,7 +312,11 @@ function loadFromStorage() {
         if (result.pb_page_doc_map) DriveSync.setPageDocMap(result.pb_page_doc_map);
         if (result.pb_drive_folder_url) setViewDriveLink(result.pb_drive_folder_url);
         applyData(result);
-        if (driveChoice === 'drive') tryDriveSync(false);
+        if (driveChoice === 'drive') {
+          tryDriveSync(false);
+        } else if (driveChoice === null) {
+          trySilentDriveRestore();
+        }
       }
     );
   } catch (_) {}
@@ -337,7 +344,7 @@ function scheduleSave() {
 function flushCurrentPage() {
   if (!activePageId || !isDirty) return;
   const page = findPage(activePageId);
-  if (!page) return;
+  if (!page || page.isFileRef) return;
   page.content   = getContent();
   page.title     = titleVal();
   page.updatedAt = new Date().toISOString();
@@ -567,6 +574,36 @@ function updateViewDriveLink() {
   }
 }
 
+async function trySilentDriveRestore() {
+  try {
+    await DriveSync.getToken(false); // non-interactive — no popup
+    const driveData = await DriveSync.load(false);
+    if (!driveData || !driveData.pb_pages || driveData.pb_pages.length === 0) return;
+    // Drive has data — restore it automatically
+    saveDriveChoice('drive');
+    driveConnected    = true;
+    localLastModified = driveData.lastModified || null;
+    if (ctxOk()) {
+      try {
+        chrome.storage.local.set({
+          pb_pages:     driveData.pb_pages,
+          pb_active:    driveData.pb_active,
+          pb_folders:   driveData.pb_folders,
+          pb_downloads: driveData.pb_downloads,
+          _lastModified: driveData.lastModified,
+        });
+      } catch (_) {}
+    }
+    if (driveData.pb_page_doc_map) DriveSync.setPageDocMap(driveData.pb_page_doc_map);
+    applyData(driveData);
+    setSyncStatus('idle');
+    updateViewDriveLink();
+    showToast('Restored from Google Drive ✓');
+  } catch (_) {
+    // Silent auth failed — user not signed in or no Drive data yet; stay with local state
+  }
+}
+
 async function tryDriveSync(interactive) {
   setSyncStatus('syncing');
   try {
@@ -750,14 +787,42 @@ function initSidebarResize() {
 function activatePage(id) {
   const page = findPage(id);
   if (!page) return;
-  closePreviewModal();
   flushCurrentPage();
   activePageId = id;
   document.getElementById('page-title-input').value = page.title;
-  setContent(page.content);
+
+  if (page.isFileRef && page.driveFileId) {
+    // Revoke any existing blob, hide editor, show viewer
+    if (currentPreviewUrl) { URL.revokeObjectURL(currentPreviewUrl); currentPreviewUrl = null; }
+    document.getElementById('toolbar').hidden       = true;
+    document.getElementById('editor-scroll').hidden = true;
+    document.getElementById('editor-header').hidden = false;
+    document.getElementById('pdf-preview-panel').removeAttribute('hidden');
+    document.getElementById('preview-filename').textContent = page.title;
+    document.getElementById('preview-download-btn').hidden  = true;
+    document.getElementById('preview-iframe').src = '';
+    openFileRefViewer(page);
+  } else {
+    closePreviewModal();
+    setContent(page.content);
+  }
+
   highlightActive();
   persist();
   if (driveConnected) updateViewDriveLink();
+}
+
+async function openFileRefViewer(page) {
+  try {
+    const blobUrl     = await DriveSync.fetchFileBlobUrl(page.driveFileId);
+    currentPreviewUrl = blobUrl;
+    document.getElementById('preview-iframe').src = blobUrl;
+  } catch {
+    showToast('Could not load file from Drive', true);
+    // Fall back to editor with a note
+    closePreviewModal();
+    setContent('<p><em>File could not be loaded from Drive — it may have been deleted.</em></p>');
+  }
 }
 
 // ─── Render Pages List ────────────────────────────────────────────────────────
@@ -1019,6 +1084,14 @@ function bindGlobalEvents() {
     }
   });
   document.getElementById('btn-add-folder').addEventListener('click', () => createFolder());
+  document.getElementById('btn-upload-file').addEventListener('click', () => {
+    document.getElementById('upload-file-input').value = '';
+    document.getElementById('upload-file-input').click();
+  });
+  document.getElementById('upload-file-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) importFileAsPage(file);
+  });
   document.getElementById('btn-collapse-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btn-delete-page').addEventListener('click', () => {
     if (!activePageId) return;
@@ -1330,6 +1403,284 @@ function copyAll() {
   })();
 }
 
+// ─── File Import ──────────────────────────────────────────────────────────────
+function txtToHtml(text) {
+  return text.split(/\n\n+/)
+    .map((para) => para.trim())
+    .filter((para) => para)
+    .map((para) => {
+      const lines = para.split('\n').map((l) => esc(l)).join('<br>');
+      return `<p>${lines}</p>`;
+    })
+    .join('');
+}
+
+function mdToHtml(md) {
+  const lines = md.split('\n');
+  const out = [];
+  let inCode = false, codeLines = [];
+  let inUl = false, inOl = false;
+
+  function closeList() {
+    if (inUl) { out.push('</ul>'); inUl = false; }
+    if (inOl) { out.push('</ol>'); inOl = false; }
+  }
+
+  function inline(s) {
+    return esc(s)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('```')) {
+      if (inCode) {
+        out.push(`<pre class="code-block">${esc(codeLines.join('\n'))}</pre>`);
+        inCode = false; codeLines = [];
+      } else {
+        closeList(); inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { codeLines.push(line); continue; }
+
+    const h1 = line.match(/^# (.+)/);
+    const h2 = line.match(/^## (.+)/);
+    const h3 = line.match(/^### (.+)/);
+    if (h3) { closeList(); out.push(`<h3>${inline(h3[1])}</h3>`); continue; }
+    if (h2) { closeList(); out.push(`<h2>${inline(h2[1])}</h2>`); continue; }
+    if (h1) { closeList(); out.push(`<h1>${inline(h1[1])}</h1>`); continue; }
+
+    const bq = line.match(/^> (.+)/);
+    if (bq) { closeList(); out.push(`<blockquote>${inline(bq[1])}</blockquote>`); continue; }
+
+    const ul = line.match(/^[-*] (.+)/);
+    if (ul) {
+      if (inOl) { out.push('</ol>'); inOl = false; }
+      if (!inUl) { out.push('<ul>'); inUl = true; }
+      out.push(`<li>${inline(ul[1])}</li>`); continue;
+    }
+
+    const ol = line.match(/^\d+\. (.+)/);
+    if (ol) {
+      if (inUl) { out.push('</ul>'); inUl = false; }
+      if (!inOl) { out.push('<ol>'); inOl = true; }
+      out.push(`<li>${inline(ol[1])}</li>`); continue;
+    }
+
+    if (!line.trim()) { closeList(); continue; }
+
+    closeList();
+    out.push(`<p>${inline(line)}</p>`);
+  }
+
+  closeList();
+  if (inCode && codeLines.length) out.push(`<pre class="code-block">${esc(codeLines.join('\n'))}</pre>`);
+  return out.join('');
+}
+
+async function pdfToHtml(file) {
+  const buffer = await file.arrayBuffer();
+  const pdf    = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const parts  = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page    = await pdf.getPage(pageNum);
+    const content = await page.getTextContent({ includeMarkedContent: false });
+    const styles  = content.styles || {};
+
+    function isMonoFont(fontName) {
+      const f = (styles[fontName]?.fontFamily || '').toLowerCase();
+      return /mono|courier|consolas|source.?code|inconsolata|fira|hack|menlo|lucida.console|droid.sans.mono/.test(f);
+    }
+
+    const items = content.items.filter((i) => i.str.trim());
+    if (!items.length) continue;
+
+    const sizes = items.map((i) => Math.abs(i.height)).filter((s) => s > 0).sort((a, b) => a - b);
+    const median = sizes[Math.floor(sizes.length / 2)] || 12;
+
+    // Group items into lines; track whether the whole line is monospace
+    const lines = [];
+    for (const item of items) {
+      const y    = item.transform[5];
+      const size = Math.abs(item.height) || median;
+      const mono = isMonoFont(item.fontName);
+      const last = lines[lines.length - 1];
+      if (last && Math.abs(y - last.y) < 2) {
+        last.text += item.str;
+        last.size  = Math.max(last.size, size);
+        last.mono  = last.mono && mono;
+      } else {
+        lines.push({ y, size, text: item.str, mono });
+      }
+    }
+
+    lines.sort((a, b) => b.y - a.y); // PDF Y is bottom-up → sort top-to-bottom
+
+    let paraLines = [], paraSize = median, prevY = null, prevSize = median;
+    let codeLines = [], inCode = false;
+
+    function flushCode() {
+      if (!codeLines.length) return;
+      parts.push(`<pre class="code-block">${esc(codeLines.join('\n'))}</pre>`);
+      codeLines = []; inCode = false;
+    }
+
+    function flushPara() {
+      if (!paraLines.length) return;
+      const text  = paraLines.join(' ').trim();
+      if (!text) { paraLines = []; return; }
+      const ratio = paraSize / median;
+      if (/^[•·▪▸◦]\s*/.test(text) || /^[-*]\s+/.test(text)) {
+        parts.push(`<ul><li>${esc(text.replace(/^[•·▪▸◦\-*]\s*/, ''))}</li></ul>`);
+      } else if (/^\d+[.)]\s+/.test(text)) {
+        parts.push(`<ol><li>${esc(text.replace(/^\d+[.)]\s+/, ''))}</li></ol>`);
+      } else if (ratio >= 1.6) {
+        parts.push(`<h1>${esc(text)}</h1>`);
+      } else if (ratio >= 1.3) {
+        parts.push(`<h2>${esc(text)}</h2>`);
+      } else if (ratio >= 1.1) {
+        parts.push(`<h3>${esc(text)}</h3>`);
+      } else {
+        parts.push(`<p>${esc(text)}</p>`);
+      }
+      paraLines = []; paraSize = median;
+    }
+
+    for (const line of lines) {
+      const gap = prevY !== null ? prevY - line.y : 0;
+
+      if (line.mono) {
+        if (!inCode) { flushPara(); inCode = true; }
+        else if (gap > prevSize * 3) flushCode(); // large gap breaks the code block
+        codeLines.push(line.text);
+      } else {
+        if (inCode) flushCode();
+        if (prevY !== null && gap > prevSize * 1.5) flushPara();
+        paraLines.push(line.text.trim());
+        paraSize = Math.max(paraSize, line.size);
+      }
+      prevY    = line.y;
+      prevSize = line.size;
+    }
+    flushCode();
+    flushPara();
+
+    if (pageNum < pdf.numPages) parts.push('<hr>');
+  }
+
+  // Merge consecutive list items
+  const merged = [];
+  for (const part of parts) {
+    const last = merged[merged.length - 1] || '';
+    if (part.startsWith('<ul><li>') && last.startsWith('<ul>')) {
+      merged[merged.length - 1] = last.slice(0, -5) + part.slice(4);
+    } else if (part.startsWith('<ol><li>') && last.startsWith('<ol>')) {
+      merged[merged.length - 1] = last.slice(0, -5) + part.slice(4);
+    } else {
+      merged.push(part);
+    }
+  }
+
+  return merged.join('') || '<p><br></p>';
+}
+
+async function importFileAsPage(file) {
+  const ext   = file.name.split('.').pop().toLowerCase();
+  const title = file.name.replace(/\.[^.]+$/, '');
+
+  const noTextSupport = ['doc', 'xls', 'xlsx', 'ppt', 'pptx'];
+  if (noTextSupport.includes(ext)) {
+    showToast(`${ext.toUpperCase()} can't be imported directly — open the file, copy the text, and paste it into a page`, true);
+    return;
+  }
+
+  if (ext === 'docx') {
+    if (typeof mammoth === 'undefined') {
+      showToast('DOCX library not loaded — run setup.bat to download it', true);
+      return;
+    }
+    showToast('Reading DOCX…');
+    try {
+      const buffer = await file.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer: buffer }, {
+        styleMap: [
+          "p[style-name='Code'] => pre.code-block:fresh",
+          "p[style-name='Code Block'] => pre.code-block:fresh",
+          "p[style-name='Preformatted Text'] => pre.code-block:fresh",
+          "p[style-name='Source Code'] => pre.code-block:fresh",
+          "r[style-name='Code Character'] => code",
+        ],
+      });
+      const html   = sanitizePastedHtml(result.value) || '<p><br></p>';
+      createPage(title, html);
+      showToast(`Imported "${file.name}"`);
+    } catch {
+      showToast('Could not read DOCX', true);
+    }
+    return;
+  }
+
+  if (ext === 'pdf') {
+    if (typeof pdfjsLib === 'undefined') {
+      showToast('PDF library not loaded — run setup.bat to download it', true);
+      return;
+    }
+    if (driveConnected) {
+      // Upload raw PDF to Drive → show exact file via viewer
+      showToast('Uploading file…');
+      try {
+        const driveFileId = await DriveSync.uploadRawFile(file);
+        const now  = new Date().toISOString();
+        const page = { id: uid(), title, content: '', folderId: null, createdAt: now, updatedAt: now, isFileRef: true, fileRefType: 'pdf', driveFileId };
+        flushCurrentPage();
+        pages.push(page);
+        renderPagesList();
+        activatePage(page.id);
+        persist();
+        showToast(`Imported "${file.name}"`);
+      } catch {
+        showToast('Drive upload failed — extracting text instead', true);
+        const html = await pdfToHtml(file);
+        createPage(title, html);
+      }
+    } else {
+      // No Drive — extract text with best-effort formatting
+      showToast('Reading PDF…');
+      try {
+        const html = await pdfToHtml(file);
+        createPage(title, html);
+        showToast(`Imported "${file.name}" — connect Drive for exact rendering`);
+      } catch {
+        showToast('Could not read PDF', true);
+      }
+    }
+    return;
+  }
+
+  let text;
+  try {
+    text = await file.text();
+  } catch {
+    showToast('Could not read file', true);
+    return;
+  }
+
+  let html;
+  if (ext === 'html' || ext === 'htm') {
+    html = sanitizePastedHtml(text);
+  } else if (ext === 'md') {
+    html = mdToHtml(text);
+  } else {
+    html = txtToHtml(text);
+  }
+
+  createPage(title, html || '<p><br></p>');
+  showToast(`Imported "${file.name}"`);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1366,7 +1717,7 @@ function buildWelcomeContent() {
 
 <h2>Quick Start</h2>
 <ul>
-  <li>Click <strong>+ New</strong> in the left panel to add a page</li>
+  <li>Click <strong>+ New</strong> in the left panel to add a page, or the <strong>↑ upload</strong> icon to import a .txt, .md, or .html file</li>
   <li>Click <strong>📁</strong> to create a folder and organise pages inside it</li>
   <li>Paste any ChatGPT answer — formatting stays intact</li>
   <li>Drag the <strong>⠿</strong> handle to reorder pages</li>

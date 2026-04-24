@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Playbook",
-  "version": "1.2",
+  "version": "1.3",
   "description": "Floating sidebar to build, organize, and export interview prep notes with full rich-text formatting.",
   "permissions": ["storage", "activeTab", "scripting", "identity"],
   "oauth2": {
@@ -22,7 +22,10 @@
         "sidebar.js",
         "drive-sync.js",
         "lib/Sortable.min.js",
-        "lib/html2pdf.bundle.min.js"
+        "lib/html2pdf.bundle.min.js",
+        "lib/pdf.min.js",
+        "lib/pdf.worker.min.js",
+        "lib/mammoth.min.js"
       ],
       "matches": ["<all_urls>"]
     }

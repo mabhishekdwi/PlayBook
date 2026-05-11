@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Playbook",
-  "version": "1.3",
+  "version": "1.4",
   "description": "Floating sidebar to build, organize, and export interview prep notes with full rich-text formatting.",
   "permissions": ["storage", "activeTab", "scripting", "identity"],
   "oauth2": {

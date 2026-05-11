@@ -393,7 +393,14 @@ function deletePage(id) {
   if (pages.length <= 1) { showToast('At least one page must remain'); return; }
   const idx = pages.findIndex((p) => p.id === id);
   if (idx === -1) return;
-  if (driveConnected) DriveSync.deleteDriveDoc(id);
+  if (driveConnected) {
+    const page = pages[idx];
+    if (page.isFileRef && page.driveFileId) {
+      DriveSync.deleteFile(page.driveFileId).catch(() => {});
+    } else {
+      DriveSync.deleteDriveDoc(id);
+    }
+  }
   pages.splice(idx, 1);
   if (activePageId === id) activatePage(pages[Math.min(idx, pages.length - 1)].id);
   renderPagesList();
@@ -485,6 +492,8 @@ function setSyncStatus(state) {
   else if (state === 'error')        lbl.textContent = 'Sync failed';
   else if (state === 'disconnected') lbl.textContent = 'Connect Drive';
   else                               lbl.textContent = 'Drive';
+  const importBtn = document.getElementById('btn-drive-import');
+  if (importBtn) importBtn.hidden = (state === 'disconnected' || state === 'syncing');
 }
 
 function showDeleteConfirm(message, onConfirm) {
@@ -502,6 +511,17 @@ function showDeleteConfirm(message, onConfirm) {
 
 function setViewDriveLink(url) {
   const a = document.getElementById('btn-view-drive');
+  if (!a) return;
+  if (url) {
+    a.href = url;
+    a.removeAttribute('hidden');
+  } else {
+    a.setAttribute('hidden', '');
+  }
+}
+
+function setFolderLink(url) {
+  const a = document.getElementById('btn-view-folder');
   if (!a) return;
   if (url) {
     a.href = url;
@@ -572,6 +592,111 @@ function updateViewDriveLink() {
   if (btn && folderUrl) {
     btn.title = 'Synced to: Google Drive / Playbook\n' + folderUrl;
   }
+  setFolderLink(folderUrl || null);
+}
+
+// ─── Drive Import from Folder ─────────────────────────────────────────────────
+function driveFileIcon(mimeType, name) {
+  if (mimeType === 'application/pdf') return '📄';
+  if (mimeType.includes('word') || name.endsWith('.docx')) return '📝';
+  if (mimeType === 'application/vnd.google-apps.document') return '📃';
+  if (mimeType.startsWith('text/')) return '📄';
+  return '📎';
+}
+
+async function openDriveImportModal() {
+  const modal = document.getElementById('drive-import-modal');
+  const list  = document.getElementById('drive-file-list');
+  list.innerHTML = '<li class="drive-file-loading">Loading…</li>';
+  modal.removeAttribute('hidden');
+
+  try {
+    const driveFiles  = await DriveSync.listPlaybookFiles();
+    const pageDocIds  = new Set(Object.values(DriveSync.getPageDocMap()));
+    const importedIds = new Set(pages.filter((p) => p.driveFileId).map((p) => p.driveFileId));
+
+    if (!driveFiles.length) {
+      list.innerHTML = '<li class="drive-file-empty">No files found in your Playbook folder</li>';
+      return;
+    }
+
+    list.innerHTML = driveFiles.map((f) => {
+      const isPageDoc = pageDocIds.has(f.id);
+      const already   = importedIds.has(f.id);
+      const statusTag = isPageDoc ? ' · Auto-synced page' : already ? ' · Already imported' : '';
+      const date    = new Date(f.modifiedTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      const size    = f.size ? `${(f.size / 1024).toFixed(0)} KB · ` : '';
+      return `<li class="drive-file-item">
+        <label>
+          <input type="checkbox" class="drive-file-cb"
+            data-id="${f.id}" data-name="${esc(f.name)}" data-mime="${f.mimeType}" />
+          <span class="drive-file-icon">${driveFileIcon(f.mimeType, f.name)}</span>
+          <span class="drive-file-info">
+            <span class="drive-file-name">${esc(f.name)}</span>
+            <span class="drive-file-meta">${size}${date}${statusTag}</span>
+          </span>
+        </label>
+      </li>`;
+    }).join('');
+  } catch {
+    list.innerHTML = '<li class="drive-file-error">Failed to load Drive files</li>';
+  }
+}
+
+function closeDriveImportModal() {
+  document.getElementById('drive-import-modal').setAttribute('hidden', '');
+}
+
+async function importDriveFile(driveFile) {
+  const ext      = driveFile.name.split('.').pop().toLowerCase();
+  const title    = driveFile.name.replace(/\.[^.]+$/, '');
+  const mimeType = driveFile.mimeType;
+
+  const blob = await DriveSync.downloadFile(driveFile.id, mimeType);
+
+  if (mimeType === 'application/pdf' || ext === 'pdf') {
+    // Show as exact file via viewer
+    const now  = new Date().toISOString();
+    const page = { id: uid(), title, content: '', folderId: null, createdAt: now, updatedAt: now, isFileRef: true, fileRefType: 'pdf', driveFileId: driveFile.id };
+    flushCurrentPage();
+    pages.push(page);
+    renderPagesList();
+    activatePage(page.id);
+    persist();
+  } else if (mimeType.includes('word') || ext === 'docx') {
+    const buffer = await blob.arrayBuffer();
+    const result = await mammoth.convertToHtml({ arrayBuffer: buffer }, {
+      styleMap: [
+        "p[style-name='Code'] => pre.code-block:fresh",
+        "p[style-name='Code Block'] => pre.code-block:fresh",
+        "p[style-name='Preformatted Text'] => pre.code-block:fresh",
+        "r[style-name='Code Character'] => code",
+      ],
+    });
+    createPage(title, sanitizePastedHtml(result.value) || '<p><br></p>');
+  } else if (mimeType === 'application/vnd.google-apps.document') {
+    createPage(title, sanitizePastedHtml(await blob.text()) || '<p><br></p>');
+  } else if (ext === 'md') {
+    createPage(title, mdToHtml(await blob.text()));
+  } else {
+    createPage(title, txtToHtml(await blob.text()));
+  }
+}
+
+async function importSelectedDriveFiles() {
+  const selected = Array.from(document.querySelectorAll('.drive-file-cb:not(:disabled):checked'));
+  if (!selected.length) { showToast('Select at least one file'); return; }
+  closeDriveImportModal();
+  let done = 0;
+  for (const cb of selected) {
+    try {
+      await importDriveFile({ id: cb.dataset.id, name: cb.dataset.name, mimeType: cb.dataset.mime });
+      done++;
+    } catch {
+      showToast(`Failed to import ${cb.dataset.name}`, true);
+    }
+  }
+  if (done) showToast(`${done} file${done > 1 ? 's' : ''} imported`);
 }
 
 async function trySilentDriveRestore() {
@@ -1108,6 +1233,19 @@ function bindGlobalEvents() {
   // PDF button opens the selection modal instead of exporting immediately
   document.getElementById('btn-export-pdf').addEventListener('click', openPdfModal);
   document.getElementById('btn-copy-all').addEventListener('click', copyAll);
+  document.getElementById('btn-drive-import').addEventListener('click', openDriveImportModal);
+  document.getElementById('drive-import-close').addEventListener('click',  closeDriveImportModal);
+  document.getElementById('drive-import-cancel').addEventListener('click', closeDriveImportModal);
+  document.getElementById('drive-import-confirm').addEventListener('click', importSelectedDriveFiles);
+  document.getElementById('drive-import-select-all').addEventListener('click', () => {
+    document.querySelectorAll('.drive-file-cb:not(:disabled)').forEach((cb) => (cb.checked = true));
+  });
+  document.getElementById('drive-import-deselect-all').addEventListener('click', () => {
+    document.querySelectorAll('.drive-file-cb:not(:disabled)').forEach((cb) => (cb.checked = false));
+  });
+  document.getElementById('drive-import-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeDriveImportModal();
+  });
 
   // Modal controls
   document.getElementById('modal-close').addEventListener('click',  closePdfModal);
@@ -1144,7 +1282,7 @@ function bindGlobalEvents() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closePdfModal(); closePreviewModal(); }
+    if (e.key === 'Escape') { closePdfModal(); closePreviewModal(); closeDriveImportModal(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
       flushCurrentPage();

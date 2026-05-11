@@ -214,6 +214,42 @@ ${page.content || ''}`;
 
   function getPageDocMap() { return _pageDocMap; }
 
+  // ── List all files in the Playbook folder (excludes sync JSON) ───────────────
+  async function listPlaybookFiles() {
+    const folderId = await findOrCreateFolder();
+    const q = encodeURIComponent(
+      `'${folderId}' in parents and trashed=false and name != '${SYNC_NAME}'`
+    );
+    const baseUrl = `${API}/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,modifiedTime)&spaces=drive&orderBy=modifiedTime+desc&pageSize=1000`;
+    let files = [];
+    let pageToken = null;
+    do {
+      const url = pageToken ? `${baseUrl}&pageToken=${encodeURIComponent(pageToken)}` : baseUrl;
+      const res = await apiFetch(url);
+      if (!res.ok) throw new Error(`List failed ${res.status}`);
+      const data = await res.json();
+      files = files.concat(data.files || []);
+      pageToken = data.nextPageToken || null;
+    } while (pageToken);
+    return files;
+  }
+
+  // ── Download a Drive file; Google Docs are exported as HTML ──────────────────
+  async function downloadFile(fileId, mimeType) {
+    const isGDoc = mimeType === 'application/vnd.google-apps.document';
+    const url    = isGDoc
+      ? `${API}/files/${fileId}/export?mimeType=text/html`
+      : `${API}/files/${fileId}?alt=media`;
+    const res = await apiFetch(url);
+    if (!res.ok) throw new Error(`Download failed ${res.status}`);
+    return res.blob();
+  }
+
+  // ── Delete a raw uploaded file from Drive ─────────────────────────────────────
+  async function deleteFile(fileId) {
+    await apiFetch(`${API}/files/${fileId}`, { method: 'DELETE' });
+  }
+
   // ── Upload a raw file (PDF, DOCX, …) into the Playbook folder ────────────────
   async function uploadRawFile(file) {
     const t        = _token || await getToken(false);
@@ -241,5 +277,5 @@ ${page.content || ''}`;
     return URL.createObjectURL(blob);
   }
 
-  return { load, save, deleteDriveDoc, getToken, clearToken, getFolderUrl, getPageDocUrl, setPageDocMap, getPageDocMap, uploadRawFile, fetchFileBlobUrl };
+  return { load, save, deleteDriveDoc, getToken, clearToken, getFolderUrl, getPageDocUrl, setPageDocMap, getPageDocMap, uploadRawFile, fetchFileBlobUrl, listPlaybookFiles, downloadFile, deleteFile };
 })();
